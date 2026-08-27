@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import json
+from collections import Counter
+from pathlib import Path
+
+from glove_chirality.dataset import CLASSES, ManifestDataset, grouped_split, read_manifest
+from glove_chirality.models import build_model
+
+
+def classification_metrics(targets: list[int], predictions: list[int], classes: int = 2):
+    confusion = [[0 for _ in range(classes)] for _ in range(classes)]
+    for target, prediction in zip(targets, predictions, strict=True):
+        confusion[target][prediction] += 1
+    total = sum(sum(row) for row in confusion)
+    accuracy = sum(confusion[index][index] for index in range(classes)) / max(total, 1)
+    recalls, f1_scores = [], []
+    for index in range(classes):
+        true_positive = confusion[index][index]
+        false_negative = sum(confusion[index]) - true_positive
+        false_positive = sum(row[index] for row in confusion) - true_positive
+        recall = true_positive / max(true_positive + false_negative, 1)
+        precision = true_positive / max(true_positive + false_positive, 1)
+        recalls.append(recall)
+        f1_scores.append(2 * precision * recall / max(precision + recall, 1e-12))
+    return {
+        "accuracy": accuracy,
+        "balanced_accuracy": sum(recalls) / classes,
+        "macro_f1": sum(f1_scores) / classes,
+        "confusion_matrix": confusion,
+    }
+
+
+def train_classifier(
+    manifest: str | Path,
+    output: str | Path,
+    model_name: str = "tiny_cnn",
+    epochs: int = 10,
+    batch_size: int = 32,
+    image_size: int = 224,
+    learning_rate: float = 1e-3,
+    validation_fraction: float = 0.2,
+    seed: int = 42,
+) -> dict[str, object]:
+    try:
+        import torch
+        from torch.utils.data import DataLoader
+    except ImportError as exc:
+        raise RuntimeError("Training requires: pip install -e .[ml]") from exc
+
+    torch.manual_seed(seed)
+    rows = read_manifest(manifest)
+    train_rows, validation_rows = grouped_split(rows, validation_fraction, seed)
+    train_loader = DataLoader(
+        ManifestDataset(train_rows, image_size, True), batch_size=batch_size, shuffle=True
+    )
+    validation_loader = DataLoader(
+        ManifestDataset(validation_rows, image_size, False), batch_size=batch_size
+    )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = build_model(model_name, len(CLASSES), pretrained=True).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    counts = Counter(row["label"] for row in train_rows)
+    class_weights = torch.tensor(
+        [len(train_rows) / (len(CLASSES) * counts[label]) for label in CLASSES],
+        dtype=torch.float32,
+        device=device,
+    )
+    loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
+    best_score = -1.0
+    best_metrics: dict[str, object] = {}
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    for epoch in range(epochs):
+        model.train()
+        for images, targets in train_loader:
+            images, targets = images.to(device), targets.to(device)
+            optimizer.zero_grad()
+            loss = loss_fn(model(images), targets)
+            loss.backward()
+            optimizer.step()
+
+        model.eval()
+        targets_all: list[int] = []
+        predictions_all: list[int] = []
+        with torch.no_grad():
+            for images, targets in validation_loader:
+                predictions = model(images.to(device)).argmax(1).cpu()
+                predictions_all.extend(predictions.tolist())
+                targets_all.extend(targets.tolist())
+        metrics = classification_metrics(targets_all, predictions_all, len(CLASSES))
+        print(
+            f"epoch={epoch + 1}/{epochs} "
+            f"val_accuracy={metrics['accuracy']:.4f} "
+            f"val_balanced_accuracy={metrics['balanced_accuracy']:.4f} "
+            f"val_macro_f1={metrics['macro_f1']:.4f}"
+        )
+        score = float(metrics["balanced_accuracy"])
+        if score > best_score:
+            best_score, best_metrics = score, metrics
+            torch.save(
+                {
+                    "state_dict": model.state_dict(),
+                    "model_name": model_name,
+                    "classes": CLASSES,
+                    "image_size": image_size,
+                    "preprocessing": "imagenet_rgb_normalized_no_reflection",
+                    "validation_metrics": metrics,
+                },
+                output,
+            )
+
+    summary = {
+        "model": model_name,
+        "device": str(device),
+        "train_samples": len(train_rows),
+        "validation_samples": len(validation_rows),
+        "best_validation": best_metrics,
+    }
+    output.with_suffix(output.suffix + ".metrics.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
+    return summary

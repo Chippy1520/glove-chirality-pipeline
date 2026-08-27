@@ -1,0 +1,25 @@
+# All boxes use normalized full-frame coordinates: [x1, y1, x2, y2].
+# Calibrate on representative real frames before batch processing.
+detector:
+  backend: dark_contour
+  roi: [0.05, 0.05, 0.95, 0.95]
+  trigger_zone: [0.20, 0.15, 0.80, 0.85]
+  dark_threshold: 105
+  blur_kernel: 7
+  morph_kernel: 11
+  min_area_ratio: 0.015
+  max_area_ratio: 0.55
+  min_solidity: 0.35
+  yolo_model: yolo11n.pt
+  yolo_confidence: 0.35
+  yolo_class_id: null
+
+event:
+  min_detected_frames: 2
+  exit_missing_frames: 5
+  cooldown_frames: 8
+  max_track_distance_ratio: 0.20
+  crop_padding: 0.12
+  make_square: true
+  min_sharpness: 0.0
+  save_full_frames: false

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "glove-chirality"
+version = "0.1.0"
+description = "Modular conveyor event extraction and left/right glove classification"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Chathuka Elapatha"}]
+dependencies = ["numpy>=1.24", "opencv-python>=4.8", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+ml = ["torch>=2.2", "torchvision>=0.17"]
+yolo = ["ultralytics>=8.2"]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+all = ["torch>=2.2", "torchvision>=0.17", "ultralytics>=8.2", "pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+glove-pipeline = "glove_chirality.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

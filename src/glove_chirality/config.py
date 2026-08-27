@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -59,10 +59,30 @@ class ExtractionConfig:
             event=_load(EventConfig, raw.get("event", {})),
         )
 
+    def to_yaml(self, path: str | Path) -> Path:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as stream:
+            yaml.safe_dump(_lists(asdict(self)), stream, sort_keys=False)
+        return path
+
 
 def _load(cls: type, values: dict[str, Any]):
+    values = dict(values)
+    if cls is DetectorConfig:
+        for key in ("roi", "trigger_zone"):
+            if key in values:
+                values[key] = tuple(values[key])
     allowed = set(cls.__dataclass_fields__)
     unknown = sorted(set(values) - allowed)
     if unknown:
         raise ValueError(f"Unknown {cls.__name__} settings: {', '.join(unknown)}")
     return cls(**values)
+
+
+def _lists(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _lists(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_lists(item) for item in value]
+    return value

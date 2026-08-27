@@ -6,6 +6,16 @@ The central design rule is that dataset creation and deployment call the **same 
 
 For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md).
 
+## Lightweight desktop GUI
+
+Launch the Tkinter interface after installation:
+
+```bash
+glove-pipeline-gui
+```
+
+It provides file/directory pickers, common extraction-setting editing with YAML load/save, calibration preview, labeled/unlabeled extraction, model/GPU training controls, image/video inference, live logs, and process stopping. It calls the same CLI backend, so GUI and scripted runs remain reproducible. See [`docs/GUI.md`](docs/GUI.md).
+
 ## Pipeline
 
 ```text

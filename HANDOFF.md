@@ -30,6 +30,7 @@ Expected data inventory, not stored here:
 - Source-video-grouped validation split and class-weighted training.
 - Accuracy, balanced accuracy, macro-F1, and confusion matrix output.
 - Explicit CPU/GPU selection, CUDA mixed precision, and loader worker controls.
+- Lightweight Tkinter GUI for paths, common YAML settings, extraction, training, and inference.
 - Synthetic MJPEG integration test and GitHub Actions CI.
 
 ## What is not complete

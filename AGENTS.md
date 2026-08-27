@@ -23,7 +23,8 @@ Read, in order:
 2. `HANDOFF.md`
 3. `docs/ARCHITECTURE.md`
 4. `docs/REAL_VIDEO_PLAN.md`
-5. `docs/VERIFICATION_CHECKLIST.md`
+5. `docs/GUI.md`
+6. `docs/VERIFICATION_CHECKLIST.md`
 
 Install and verify:
 
@@ -43,6 +44,7 @@ For an NVIDIA GPU, install the PyTorch build matching the machine's CUDA driver 
 - Shared passage extractor for dataset and deployment modes.
 - TinyCNN, ResNet-18, MobileNetV3-Small, and ViT-B/16 adapters.
 - Explicit `auto/cpu/cuda/cuda:N` controls, CUDA AMP, and DataLoader workers.
+- Lightweight Tkinter GUI that delegates all operations to the public CLI.
 - Grouped splitting, class-weighted loss, balanced metrics, synthetic integration fixtures, and CI.
 - No real recordings or trained production weights are in this repository.
 

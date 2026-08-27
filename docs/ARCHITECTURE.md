@@ -33,6 +33,8 @@ Passage extractor state machine
 | `inference.py` | Checkpoint loading and image predictions |
 | `diagnostics.py` | ROI/trigger/detection preview image |
 | `cli.py` | Public commands and end-to-end orchestration |
+| `gui_commands.py` | Testable GUI-to-CLI command construction |
+| `gui.py` | Lightweight Tkinter forms, settings editor, and background process log |
 
 ## Extraction lifecycle
 

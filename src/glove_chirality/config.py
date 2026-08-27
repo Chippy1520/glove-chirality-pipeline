@@ -21,6 +21,8 @@ class DetectorConfig:
     yolo_model: str = "yolo11n.pt"
     yolo_confidence: float = 0.35
     yolo_class_id: int | None = None
+    yolo_device: str = "auto"
+    yolo_half: bool = False
 
 
 @dataclass

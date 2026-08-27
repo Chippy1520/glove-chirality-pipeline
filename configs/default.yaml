@@ -13,6 +13,8 @@ detector:
   yolo_model: yolo11n.pt
   yolo_confidence: 0.35
   yolo_class_id: null
+  yolo_device: auto
+  yolo_half: false
 
 event:
   min_detected_frames: 2

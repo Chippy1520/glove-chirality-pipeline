@@ -4,6 +4,8 @@ A modular computer-vision framework for turning fixed-camera conveyor videos int
 
 The central design rule is that dataset creation and deployment call the **same event extractor**. This prevents train/deployment crop skew.
 
+For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md).
+
 ## Pipeline
 
 ```text
@@ -49,6 +51,12 @@ Add PyTorch classifiers:
 
 ```bash
 python -m pip install -e '.[ml,dev]'
+```
+
+The package does not force CPU execution. Install the PyTorch build matching the machine's CUDA driver using the official PyTorch selector, then verify:
+
+```bash
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
 Add the optional YOLO detector:
@@ -128,12 +136,15 @@ glove-pipeline train \
   --manifest data/chirality_v1/manifest.csv \
   --model resnet18 \
   --epochs 20 \
+  --device cuda \
+  --amp \
+  --workers 4 \
   --output checkpoints/resnet18_best.pt
 ```
 
 Choices: `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, `vit_b_16`.
 
-The split is by **source video**, not random images. Horizontal flipping is intentionally absent because a reflection can alter chirality semantics. Training uses class-weighted loss, selects checkpoints by validation balanced accuracy, and writes accuracy, balanced accuracy, macro-F1, and a confusion matrix to `<checkpoint>.metrics.json`. With only three right-glove videos, report per-video results and uncertainty; collect both classes under matched recording conditions to reduce background/session leakage.
+`--device auto` uses CUDA when available; `cpu`, `cuda`, and `cuda:N` are explicit alternatives. `--amp` enables CUDA mixed precision. The split is by **source video**, not random images. Horizontal flipping is intentionally absent because a reflection can alter chirality semantics. Training uses class-weighted loss, selects checkpoints by validation balanced accuracy, and writes accuracy, balanced accuracy, macro-F1, and a confusion matrix to `<checkpoint>.metrics.json`. With only three right-glove videos, report per-video results and uncertainty; collect both classes under matched recording conditions to reduce background/session leakage.
 
 ## 5. Inference
 
@@ -152,6 +163,7 @@ End-to-end deployment on a video uses the same extraction code as training:
 glove-pipeline infer-video \
   --video new_conveyor_run.mkv \
   --checkpoint checkpoints/resnet18_best.pt \
+  --device cuda \
   --config configs/default.yaml \
   --output outputs/run_001
 ```
@@ -172,6 +184,8 @@ detector:
   yolo_model: checkpoints/glove_detector.pt
   yolo_confidence: 0.35
   yolo_class_id: 0
+  yolo_device: 0
+  yolo_half: true
 ```
 
 A generic COCO nano model does not contain a glove class; `yolo11n.pt` is only a placeholder for interface testing and must be replaced by custom weights.

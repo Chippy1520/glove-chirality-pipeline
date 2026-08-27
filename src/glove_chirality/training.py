@@ -41,6 +41,9 @@ def train_classifier(
     learning_rate: float = 1e-3,
     validation_fraction: float = 0.2,
     seed: int = 42,
+    device_name: str = "auto",
+    amp: bool = False,
+    workers: int = 0,
 ) -> dict[str, object]:
     try:
         import torch
@@ -51,13 +54,23 @@ def train_classifier(
     torch.manual_seed(seed)
     rows = read_manifest(manifest)
     train_rows, validation_rows = grouped_split(rows, validation_fraction, seed)
+    if device_name == "auto":
+        device_name = "cuda" if torch.cuda.is_available() else "cpu"
+    if device_name.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested, but this PyTorch installation cannot access a GPU")
+    device = torch.device(device_name)
+    loader_options = {
+        "batch_size": batch_size,
+        "num_workers": workers,
+        "pin_memory": device.type == "cuda",
+        "persistent_workers": workers > 0,
+    }
     train_loader = DataLoader(
-        ManifestDataset(train_rows, image_size, True), batch_size=batch_size, shuffle=True
+        ManifestDataset(train_rows, image_size, True), shuffle=True, **loader_options
     )
     validation_loader = DataLoader(
-        ManifestDataset(validation_rows, image_size, False), batch_size=batch_size
+        ManifestDataset(validation_rows, image_size, False), **loader_options
     )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(model_name, len(CLASSES), pretrained=True).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     counts = Counter(row["label"] for row in train_rows)
@@ -67,6 +80,11 @@ def train_classifier(
         device=device,
     )
     loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
+    use_amp = amp and device.type == "cuda"
+    if hasattr(torch.amp, "GradScaler"):
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    else:  # PyTorch 2.2 compatibility
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     best_score = -1.0
     best_metrics: dict[str, object] = {}
     output = Path(output)
@@ -75,11 +93,14 @@ def train_classifier(
     for epoch in range(epochs):
         model.train()
         for images, targets in train_loader:
-            images, targets = images.to(device), targets.to(device)
+            images = images.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
             optimizer.zero_grad()
-            loss = loss_fn(model(images), targets)
-            loss.backward()
-            optimizer.step()
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
+                loss = loss_fn(model(images), targets)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
         model.eval()
         targets_all: list[int] = []
@@ -114,6 +135,8 @@ def train_classifier(
     summary = {
         "model": model_name,
         "device": str(device),
+        "mixed_precision": use_amp,
+        "workers": workers,
         "train_samples": len(train_rows),
         "validation_samples": len(validation_rows),
         "best_validation": best_metrics,

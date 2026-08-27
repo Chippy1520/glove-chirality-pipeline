@@ -37,10 +37,15 @@ class TorchClassifier:
         return self.classes[index], float(probabilities[index])
 
 
-def infer_images(input_path: str | Path, checkpoint: str | Path, output_csv: str | Path):
+def infer_images(
+    input_path: str | Path,
+    checkpoint: str | Path,
+    output_csv: str | Path,
+    device: str = "auto",
+):
     source = Path(input_path)
     images = [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.suffix.lower() in IMAGE_EXTENSIONS)
-    classifier = TorchClassifier(checkpoint)
+    classifier = TorchClassifier(checkpoint, device=device)
     rows = []
     for image in images:
         label, confidence = classifier.predict(image)

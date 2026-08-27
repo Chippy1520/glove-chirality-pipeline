@@ -23,7 +23,14 @@ class YoloDetector(GloveDetector):
     def detect(self, frame: np.ndarray) -> list[Detection]:
         height, width = frame.shape[:2]
         tx1, ty1, tx2, ty2 = self.config.trigger_zone
-        result = self.model.predict(frame, conf=self.config.yolo_confidence, verbose=False)[0]
+        options: dict[str, object] = {
+            "conf": self.config.yolo_confidence,
+            "verbose": False,
+            "half": self.config.yolo_half,
+        }
+        if self.config.yolo_device != "auto":
+            options["device"] = self.config.yolo_device
+        result = self.model.predict(frame, **options)[0]
         detections: list[Detection] = []
         for box in result.boxes:
             class_id = int(box.cls.item())

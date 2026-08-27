@@ -64,17 +64,22 @@ def build_parser():
     train.add_argument("--learning-rate", type=float, default=1e-3)
     train.add_argument("--validation-fraction", type=float, default=0.2)
     train.add_argument("--seed", type=int, default=42)
+    train.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
+    train.add_argument("--amp", action="store_true", help="Use CUDA mixed precision")
+    train.add_argument("--workers", type=int, default=0, help="DataLoader worker processes")
 
     images = sub.add_parser("infer-images", help="Classify a crop or crop directory")
     images.add_argument("--input", required=True)
     images.add_argument("--checkpoint", required=True)
     images.add_argument("--output", required=True)
+    images.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
 
     video = sub.add_parser("infer-video", help="Extract passages and classify each one")
     video.add_argument("--video", required=True)
     video.add_argument("--checkpoint", required=True)
     video.add_argument("--output", required=True)
     video.add_argument("--config", default="configs/default.yaml")
+    video.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
     return parser
 
 
@@ -89,18 +94,31 @@ def main(argv=None):
         print(save_calibration_preview(args.video, args.output, ExtractionConfig.from_yaml(args.config), args.seconds))
     elif args.command == "train":
         from glove_chirality.training import train_classifier
-        metrics = train_classifier(args.manifest, args.output, args.model, args.epochs, args.batch_size, args.image_size, args.learning_rate, args.validation_fraction, args.seed)
+        metrics = train_classifier(
+            manifest=args.manifest,
+            output=args.output,
+            model_name=args.model,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            image_size=args.image_size,
+            learning_rate=args.learning_rate,
+            validation_fraction=args.validation_fraction,
+            seed=args.seed,
+            device_name=args.device,
+            amp=args.amp,
+            workers=args.workers,
+        )
         print(json.dumps(metrics, indent=2))
     elif args.command == "infer-images":
         from glove_chirality.inference import infer_images
-        rows = infer_images(args.input, args.checkpoint, args.output)
+        rows = infer_images(args.input, args.checkpoint, args.output, device=args.device)
         print(f"Wrote {len(rows)} predictions to {args.output}")
     elif args.command == "infer-video":
         from glove_chirality.inference import TorchClassifier
         output = Path(args.output)
         config = ExtractionConfig.from_yaml(args.config)
         events = extract_video(args.video, output, "unknown", config)
-        classifier = TorchClassifier(args.checkpoint)
+        classifier = TorchClassifier(args.checkpoint, device=args.device)
         prediction_path = output / "predictions.csv"
         with prediction_path.open("w", newline="", encoding="utf-8") as stream:
             fields = ["event_id", "source_video", "frame_index", "timestamp_s", "image_path", "prediction", "confidence"]

@@ -40,6 +40,7 @@ images + manifest.csv          classifier checkpoint
 - CPU `belt_foreground` detector combining Lab belt-color distance with optional temporal motion, independent of a specific glove color.
 - Legacy `dark_contour` fallback for controlled dark-glove recordings.
 - Optional Ultralytics YOLO adapter with the same detector interface.
+- Full-containment trigger gating: a glove is eligible only when its entire detected box is inside the trigger zone; partial entry/exit frames are rejected consistently by classical and YOLO backends.
 - Temporal event state machine with confirmation, tracking distance, exit timeout, cooldown, best-frame quality scoring, padded square crops, and exactly one emission per accepted event.
 - Explicit no-glove behavior: empty conveyor frames and long gaps emit no crop or prediction, while adaptive background learning refreshes the belt model between passages.
 - Label provenance: left-only/right-only video streams attach known source labels; detection never uses the label.

@@ -6,6 +6,10 @@ detector:
   backend: belt_foreground
   roi: [0.05, 0.05, 0.95, 0.95]
   trigger_zone: [0.20, 0.15, 0.80, 0.85]
+  # A glove is eligible only after its entire detected box is inside this zone.
+  require_full_containment: true
+  # Optional extra clearance, as a fraction of trigger width/height.
+  trigger_inner_margin_ratio: 0.0
   dark_threshold: 105
   color_distance_threshold: 28.0
   belt_sample_stride: 8

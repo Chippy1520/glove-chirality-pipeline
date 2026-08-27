@@ -3,15 +3,21 @@ from pathlib import Path
 import pytest
 import yaml
 
-from glove_chirality.config import ExtractionConfig
+from glove_chirality.config import DetectorConfig, ExtractionConfig
 
 
 def test_default_config_loads():
     path = Path(__file__).parents[1] / "configs" / "default.yaml"
     config = ExtractionConfig.from_yaml(path)
     assert config.detector.backend == "belt_foreground"
+    assert config.detector.require_full_containment is True
     assert config.detector.adaptive_background is True
     assert config.event.make_square is True
+
+
+def test_trigger_margin_must_leave_a_nonempty_inner_zone():
+    with pytest.raises(ValueError, match="trigger_inner_margin_ratio"):
+        DetectorConfig(trigger_inner_margin_ratio=0.5)
 
 
 def test_unknown_config_key_fails(tmp_path):

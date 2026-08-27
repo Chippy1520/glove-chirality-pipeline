@@ -34,6 +34,7 @@ Edit the most frequently calibrated parameters:
 
 - detector backend;
 - normalized ROI and trigger zone;
+- full-glove trigger containment and optional inner clearance margin;
 - belt color-distance threshold;
 - temporal motion assistance;
 - adaptive empty-belt background learning and empty/foreground learning rates;

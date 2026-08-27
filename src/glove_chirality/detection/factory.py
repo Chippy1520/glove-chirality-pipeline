@@ -4,6 +4,7 @@ from glove_chirality.detection.classical import BeltForegroundDetector, DarkCont
 
 
 def build_detector(config: DetectorConfig) -> GloveDetector:
+    config.validate()
     if config.backend == "belt_foreground":
         return BeltForegroundDetector(config)
     if config.backend == "dark_contour":

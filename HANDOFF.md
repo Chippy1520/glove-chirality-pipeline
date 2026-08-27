@@ -25,6 +25,7 @@ Expected data inventory, not stored here:
 - Installable `src/` Python package and command-line interface.
 - Color-agnostic belt-foreground, legacy dark-threshold, and custom-YOLO detector interfaces.
 - Explicit no-glove state and adaptive belt-background learning during empty conveyor gaps.
+- Full-bounding-box trigger containment by default; partial glove entry/exit frames are ineligible.
 - Shared temporal extraction path for training and inference.
 - Crop manifest with source, frame/time, geometry, quality, detector, provenance, and config hash.
 - Model factory: TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16.

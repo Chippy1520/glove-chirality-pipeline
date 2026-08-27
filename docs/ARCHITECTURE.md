@@ -40,7 +40,7 @@ Passage extractor state machine
 
 The current lightweight extractor is intended for one well-spaced glove moving through a central trigger zone:
 
-1. A detector candidate must have its center inside the trigger zone.
+1. A detector candidate must have its complete bounding box inside the trigger zone. An optional inner margin adds clearance from the boundary. The legacy center-inside policy is available only when explicitly configured.
 2. It is tentative until observed for `min_detected_frames`.
 3. The nearest plausible detection is associated using a frame-diagonal distance gate.
 4. Each candidate receives a quality score combining centrality, detector confidence, and sharpness.

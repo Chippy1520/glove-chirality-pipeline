@@ -43,6 +43,11 @@ def test_extracts_exactly_one_event_and_manifest(tmp_path, glove_color):
     output = tmp_path / "dataset"
     events = extract_video(video, output, "left", config)
     assert len(events) == 1
+    detection = events[0].detection
+    assert detection.x1 >= 0.15 * 320
+    assert detection.y1 >= 0.15 * 240
+    assert detection.x2 <= 0.85 * 320
+    assert detection.y2 <= 0.85 * 240
     assert events[0].image_path.exists()
     crop = cv2.imread(str(events[0].image_path))
     assert crop is not None and crop.shape[0] == crop.shape[1]

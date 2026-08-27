@@ -146,6 +146,8 @@ def main(argv: list[str] | None = None) -> None:
                 "backend": tk_module.StringVar(value="belt_foreground"),
                 "roi": tk_module.StringVar(value="0.05, 0.05, 0.95, 0.95"),
                 "trigger_zone": tk_module.StringVar(value="0.20, 0.15, 0.80, 0.85"),
+                "require_full_containment": tk_module.BooleanVar(value=True),
+                "trigger_inner_margin_ratio": tk_module.DoubleVar(value=0.0),
                 "color_distance_threshold": tk_module.DoubleVar(value=28.0),
                 "motion_assist": tk_module.BooleanVar(value=True),
                 "adaptive_background": tk_module.BooleanVar(value=True),
@@ -169,6 +171,7 @@ def main(argv: list[str] | None = None) -> None:
             labels = [
                 ("Backend", "backend"), ("ROI x1,y1,x2,y2", "roi"),
                 ("Trigger x1,y1,x2,y2", "trigger_zone"),
+                ("Trigger inner margin ratio", "trigger_inner_margin_ratio"),
                 ("Color-distance threshold", "color_distance_threshold"),
                 ("Empty-belt learning rate", "mog_empty_learning_rate"),
                 ("Foreground learning rate", "mog_foreground_learning_rate"),
@@ -185,6 +188,7 @@ def main(argv: list[str] | None = None) -> None:
                 widget.grid(row=row, column=1, sticky="ew", padx=6, pady=5)
             ttk_module.Checkbutton(detector, text="Temporal motion assistance", variable=self.setting_vars["motion_assist"]).grid(row=len(labels), column=0, columnspan=2, sticky="w", padx=6, pady=5)
             ttk_module.Checkbutton(detector, text="Adapt background during empty gaps", variable=self.setting_vars["adaptive_background"]).grid(row=len(labels) + 1, column=0, columnspan=2, sticky="w", padx=6, pady=5)
+            ttk_module.Checkbutton(detector, text="Require glove fully inside trigger", variable=self.setting_vars["require_full_containment"]).grid(row=len(labels) + 2, column=0, columnspan=2, sticky="w", padx=6, pady=5)
             detector.columnconfigure(1, weight=1)
 
             event_labels = [
@@ -297,7 +301,7 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 config = ExtractionConfig.from_yaml(self.config_path.get())
                 detector, event = config.detector, config.event
-                for key in ("backend", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
+                for key in ("backend", "require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
                     self.setting_vars[key].set(getattr(detector, key))
                 self.setting_vars["roi"].set(", ".join(str(value) for value in detector.roi))
                 self.setting_vars["trigger_zone"].set(", ".join(str(value) for value in detector.trigger_zone))
@@ -319,10 +323,11 @@ def main(argv: list[str] | None = None) -> None:
                 detector.backend = self.setting_vars["backend"].get()
                 detector.roi = self._parse_box(self.setting_vars["roi"].get())
                 detector.trigger_zone = self._parse_box(self.setting_vars["trigger_zone"].get())
-                for key in ("color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
+                for key in ("require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
                     setattr(detector, key, self.setting_vars[key].get())
                 for key in ("min_detected_frames", "exit_missing_frames", "cooldown_frames", "crop_padding", "make_square"):
                     setattr(event, key, self.setting_vars[key].get())
+                detector.validate()
                 config.to_yaml(path)
                 self._append_log(f"Saved settings: {path}\n")
             except (OSError, TypeError, ValueError, yaml.YAMLError, tk.TclError) as exc:

@@ -12,6 +12,8 @@ class DetectorConfig:
     backend: str = "belt_foreground"
     roi: tuple[float, float, float, float] = (0.05, 0.05, 0.95, 0.95)
     trigger_zone: tuple[float, float, float, float] = (0.20, 0.15, 0.80, 0.85)
+    require_full_containment: bool = True
+    trigger_inner_margin_ratio: float = 0.0
     dark_threshold: int = 105
     color_distance_threshold: float = 28.0
     belt_sample_stride: int = 8
@@ -32,6 +34,13 @@ class DetectorConfig:
     yolo_class_id: int | None = None
     yolo_device: str = "auto"
     yolo_half: bool = False
+
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self):
+        if not 0.0 <= self.trigger_inner_margin_ratio < 0.5:
+            raise ValueError("trigger_inner_margin_ratio must be in [0.0, 0.5)")
 
 
 @dataclass

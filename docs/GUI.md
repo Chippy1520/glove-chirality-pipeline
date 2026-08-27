@@ -36,6 +36,7 @@ Edit the most frequently calibrated parameters:
 - normalized ROI and trigger zone;
 - belt color-distance threshold;
 - temporal motion assistance;
+- adaptive empty-belt background learning and empty/foreground learning rates;
 - morphology and component-area limits;
 - event confirmation, exit, and cooldown frames;
 - crop padding and square-crop policy.
@@ -65,6 +66,7 @@ The GUI does not hide errors or fabricate success. The final subprocess exit cod
 1. Open **Extraction settings**, load a copied YAML, and adjust the ROI/trigger geometry.
 2. Use **Calibration preview** on early, middle, and late timestamps for every glove color.
 3. Extract a small annotated subset and verify misses, duplicates, and crop completeness.
+   Include entirely empty clips and long gaps between gloves; both must produce no extra events.
 4. Extract the complete labeled dataset only after passage-level calibration.
 5. Train grouped model baselines.
 6. Use full-video inference only with a validated extractor configuration and checkpoint.

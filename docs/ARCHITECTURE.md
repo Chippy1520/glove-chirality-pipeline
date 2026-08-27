@@ -49,6 +49,8 @@ The current lightweight extractor is intended for one well-spaced glove moving t
 7. A cooldown suppresses immediate re-triggering.
 8. EOF explicitly finalizes an active event.
 
+With no candidate, the state remains idle and no crop/classifier call is made. Long empty intervals are therefore normal. The belt-foreground backend uses plausible foreground occupancy to adapt MOG2 during empty gaps and freeze or slow learning while a glove is present, preventing a stationary passage from being absorbed into the background too quickly.
+
 The crop expands the chosen box, clamps it to frame boundaries, and creates an exact square without stretching. Model transforms resize it later.
 
 ## Detector strategy

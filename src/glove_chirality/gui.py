@@ -148,6 +148,9 @@ def main(argv: list[str] | None = None) -> None:
                 "trigger_zone": tk_module.StringVar(value="0.20, 0.15, 0.80, 0.85"),
                 "color_distance_threshold": tk_module.DoubleVar(value=28.0),
                 "motion_assist": tk_module.BooleanVar(value=True),
+                "adaptive_background": tk_module.BooleanVar(value=True),
+                "mog_empty_learning_rate": tk_module.DoubleVar(value=0.02),
+                "mog_foreground_learning_rate": tk_module.DoubleVar(value=0.0),
                 "morph_kernel": tk_module.IntVar(value=11),
                 "min_area_ratio": tk_module.DoubleVar(value=0.015),
                 "max_area_ratio": tk_module.DoubleVar(value=0.55),
@@ -167,6 +170,8 @@ def main(argv: list[str] | None = None) -> None:
                 ("Backend", "backend"), ("ROI x1,y1,x2,y2", "roi"),
                 ("Trigger x1,y1,x2,y2", "trigger_zone"),
                 ("Color-distance threshold", "color_distance_threshold"),
+                ("Empty-belt learning rate", "mog_empty_learning_rate"),
+                ("Foreground learning rate", "mog_foreground_learning_rate"),
                 ("Morphology kernel", "morph_kernel"),
                 ("Minimum area ratio", "min_area_ratio"),
                 ("Maximum area ratio", "max_area_ratio"),
@@ -179,6 +184,7 @@ def main(argv: list[str] | None = None) -> None:
                     widget = ttk_module.Entry(detector, textvariable=self.setting_vars[key], width=28)
                 widget.grid(row=row, column=1, sticky="ew", padx=6, pady=5)
             ttk_module.Checkbutton(detector, text="Temporal motion assistance", variable=self.setting_vars["motion_assist"]).grid(row=len(labels), column=0, columnspan=2, sticky="w", padx=6, pady=5)
+            ttk_module.Checkbutton(detector, text="Adapt background during empty gaps", variable=self.setting_vars["adaptive_background"]).grid(row=len(labels) + 1, column=0, columnspan=2, sticky="w", padx=6, pady=5)
             detector.columnconfigure(1, weight=1)
 
             event_labels = [
@@ -291,7 +297,7 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 config = ExtractionConfig.from_yaml(self.config_path.get())
                 detector, event = config.detector, config.event
-                for key in ("backend", "color_distance_threshold", "motion_assist", "morph_kernel", "min_area_ratio", "max_area_ratio"):
+                for key in ("backend", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
                     self.setting_vars[key].set(getattr(detector, key))
                 self.setting_vars["roi"].set(", ".join(str(value) for value in detector.roi))
                 self.setting_vars["trigger_zone"].set(", ".join(str(value) for value in detector.trigger_zone))
@@ -313,7 +319,7 @@ def main(argv: list[str] | None = None) -> None:
                 detector.backend = self.setting_vars["backend"].get()
                 detector.roi = self._parse_box(self.setting_vars["roi"].get())
                 detector.trigger_zone = self._parse_box(self.setting_vars["trigger_zone"].get())
-                for key in ("color_distance_threshold", "motion_assist", "morph_kernel", "min_area_ratio", "max_area_ratio"):
+                for key in ("color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
                     setattr(detector, key, self.setting_vars[key].get())
                 for key in ("min_detected_frames", "exit_missing_frames", "cooldown_frames", "crop_padding", "make_square"):
                     setattr(event, key, self.setting_vars[key].get())

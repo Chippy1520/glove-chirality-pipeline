@@ -12,7 +12,13 @@ detector:
   motion_assist: true
   mog_history: 250
   mog_var_threshold: 16.0
+  # Empty belt is a normal state: learn the belt during gaps and freeze while
+  # a plausible glove foreground is present. mog_learning_rate is the fallback
+  # used only when adaptive_background is false.
   mog_learning_rate: -1.0
+  adaptive_background: true
+  mog_empty_learning_rate: 0.02
+  mog_foreground_learning_rate: 0.0
   blur_kernel: 7
   morph_kernel: 11
   min_area_ratio: 0.015

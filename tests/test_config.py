@@ -10,6 +10,7 @@ def test_default_config_loads():
     path = Path(__file__).parents[1] / "configs" / "default.yaml"
     config = ExtractionConfig.from_yaml(path)
     assert config.detector.backend == "belt_foreground"
+    assert config.detector.adaptive_background is True
     assert config.event.make_square is True
 
 

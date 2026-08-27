@@ -14,6 +14,8 @@ Synthetic tests establish software wiring only. Follow this plan before reportin
 
 For every source, check decoded dimensions, FPS, frame count, duration, corruption, exposure changes, direction, speed, spacing, touching gloves, and partial events at file boundaries. Use sequential decoding; do not rely on random seeks for canonical extraction.
 
+Measure empty intervals explicitly: empty lead-in/tail, long inter-glove gaps, and completely empty operational footage. These must yield zero glove events, while giving the adaptive background model clean belt observations.
+
 Generate previews at early, middle, and late timestamps:
 
 ```bash

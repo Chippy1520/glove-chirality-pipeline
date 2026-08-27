@@ -19,6 +19,9 @@ class DetectorConfig:
     mog_history: int = 250
     mog_var_threshold: float = 16.0
     mog_learning_rate: float = -1.0
+    adaptive_background: bool = True
+    mog_empty_learning_rate: float = 0.02
+    mog_foreground_learning_rate: float = 0.0
     blur_kernel: int = 7
     morph_kernel: int = 11
     min_area_ratio: float = 0.015

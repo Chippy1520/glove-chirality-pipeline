@@ -95,6 +95,7 @@ class BeltForegroundDetector(_ContourDetector):
             varThreshold=config.mog_var_threshold,
             detectShadows=False,
         )
+        self._foreground_present = False
 
     def _foreground_mask(self, region: np.ndarray) -> np.ndarray:
         blur = max(3, self.config.blur_kernel | 1)
@@ -107,11 +108,22 @@ class BeltForegroundDetector(_ContourDetector):
 
         if not self.config.motion_assist:
             return color_mask
-        motion_mask = self.background_subtractor.apply(
-            smoothed, learningRate=self.config.mog_learning_rate
-        )
-        foreground_ratio = cv2.countNonZero(motion_mask) / max(1, motion_mask.size)
-        if self.config.min_area_ratio <= foreground_ratio <= self.config.max_area_ratio:
+        if self.config.adaptive_background:
+            learning_rate = (
+                self.config.mog_foreground_learning_rate
+                if self._foreground_present
+                else self.config.mog_empty_learning_rate
+            )
+        else:
+            learning_rate = self.config.mog_learning_rate
+        motion_mask = self.background_subtractor.apply(smoothed, learningRate=learning_rate)
+        pixels = max(1, motion_mask.size)
+        motion_ratio = cv2.countNonZero(motion_mask) / pixels
+        color_ratio = cv2.countNonZero(color_mask) / pixels
+        motion_valid = self.config.min_area_ratio <= motion_ratio <= self.config.max_area_ratio
+        color_valid = self.config.min_area_ratio <= color_ratio <= self.config.max_area_ratio
+        self._foreground_present = motion_valid or color_valid
+        if motion_valid:
             return motion_mask
         return color_mask
 

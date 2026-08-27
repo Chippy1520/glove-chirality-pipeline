@@ -41,6 +41,7 @@ images + manifest.csv          classifier checkpoint
 - Legacy `dark_contour` fallback for controlled dark-glove recordings.
 - Optional Ultralytics YOLO adapter with the same detector interface.
 - Temporal event state machine with confirmation, tracking distance, exit timeout, cooldown, best-frame quality scoring, padded square crops, and exactly one emission per accepted event.
+- Explicit no-glove behavior: empty conveyor frames and long gaps emit no crop or prediction, while adaptive background learning refreshes the belt model between passages.
 - Label provenance: left-only/right-only video streams attach known source labels; detection never uses the label.
 - Ordinary JPEG crops plus auditable CSV metadata.
 - Grouped train/validation split by source video to prevent adjacent-event leakage.
@@ -122,6 +123,8 @@ data/chirality_v1/
 ```
 
 The crops are independent ordinary images and may be copied into any other workflow. `manifest.csv` records event ID, known-stream label and provenance, source video, representative frame/time, original bounding box, detector, quality score, and extraction-config hash.
+
+Empty intervals are expected. They do not create `unknown` samples; `unknown` means an extracted glove event without a supplied source label. An entirely empty input produces a header-only manifest and zero images.
 
 For unlabeled extraction:
 

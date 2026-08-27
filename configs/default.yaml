@@ -1,10 +1,18 @@
 # All boxes use normalized full-frame coordinates: [x1, y1, x2, y2].
 # Calibrate on representative real frames before batch processing.
 detector:
-  backend: dark_contour
+  # Color-agnostic default: belt-color distance + optional temporal motion.
+  # Use dark_contour only as a legacy fallback, or yolo for custom weights.
+  backend: belt_foreground
   roi: [0.05, 0.05, 0.95, 0.95]
   trigger_zone: [0.20, 0.15, 0.80, 0.85]
   dark_threshold: 105
+  color_distance_threshold: 28.0
+  belt_sample_stride: 8
+  motion_assist: true
+  mog_history: 250
+  mog_var_threshold: 16.0
+  mog_learning_rate: -1.0
   blur_kernel: 7
   morph_kernel: 11
   min_area_ratio: 0.015

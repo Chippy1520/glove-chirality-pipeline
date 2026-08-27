@@ -1,9 +1,11 @@
 from glove_chirality.config import DetectorConfig
 from glove_chirality.detection.base import GloveDetector
-from glove_chirality.detection.classical import DarkContourDetector
+from glove_chirality.detection.classical import BeltForegroundDetector, DarkContourDetector
 
 
 def build_detector(config: DetectorConfig) -> GloveDetector:
+    if config.backend == "belt_foreground":
+        return BeltForegroundDetector(config)
     if config.backend == "dark_contour":
         return DarkContourDetector(config)
     if config.backend == "yolo":

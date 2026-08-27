@@ -4,7 +4,7 @@ This file lets another researcher or AI coding agent continue without access to 
 
 ## Objective
 
-A fixed 1920×1080, 25 FPS camera observes dark industrial gloves moving through a green-belt lightbox. Source recordings are separated into left-only and right-only streams. The system must:
+A fixed 1920×1080, 25 FPS camera observes industrial gloves of potentially any color moving through a green-belt lightbox. Source recordings are separated into left-only and right-only streams. The system must:
 
 1. detect a glove inside the illuminated inspection area;
 2. identify one physical passage over time;
@@ -23,7 +23,7 @@ Expected data inventory, not stored here:
 ## What is complete
 
 - Installable `src/` Python package and command-line interface.
-- Classical and YOLO detector interfaces.
+- Color-agnostic belt-foreground, legacy dark-threshold, and custom-YOLO detector interfaces.
 - Shared temporal extraction path for training and inference.
 - Crop manifest with source, frame/time, geometry, quality, detector, provenance, and config hash.
 - Model factory: TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16.

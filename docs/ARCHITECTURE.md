@@ -24,7 +24,7 @@ Passage extractor state machine
 | `config.py` | Validated YAML-backed detector/event settings |
 | `types.py` | Backend-neutral `Detection` and `ExtractedEvent` contracts |
 | `detection/base.py` | Detector abstract interface |
-| `detection/classical.py` | CPU dark-object segmentation for dataset bootstrap |
+| `detection/classical.py` | Color-agnostic Lab/motion belt foreground plus legacy dark-object fallback |
 | `detection/yolo.py` | Optional Ultralytics custom-detector adapter, CPU/GPU selectable |
 | `extraction.py` | Sequential decode, temporal confirmation/tracking, quality selection, crop and manifest |
 | `dataset.py` | Manifest loading, source-grouped split, chirality-safe transforms |
@@ -51,13 +51,15 @@ The crop expands the chosen box, clamps it to frame boundaries, and creates an e
 
 ## Detector strategy
 
-The default dark-contour detector is a bootstrap backend, not the final research commitment. It assumes a stable bright/green belt and dark gloves. Configuration controls ROI, trigger geometry, grayscale threshold, morphology, area, and solidity.
+The default `belt_foreground` backend estimates the dominant belt color in Lab space on each frame and segments pixels by perceptual color distance. This makes crop extraction independent of whether a glove is black, white, red, blue, yellow, or another visually distinct color. When MOG2 produces a plausible temporal foreground, it is preferred so a moving target is not merged with static colored distractors; color distance is the fallback. Configuration controls ROI, trigger geometry, color distance, motion modeling, morphology, area, and solidity. The former `dark_contour` backend remains available as a controlled-scene fallback.
+
+"Color-agnostic" does not mean visually impossible camouflage can be solved from one RGB frame. If glove and belt pixels are effectively indistinguishable, detection needs motion history, a more contrasting belt/background, another sensing modality, or a learned model that can exploit shape/context. Touching gloves remain an instance-separation problem.
 
 Upgrade paths, in recommended order:
 
-1. Belt-color/background-distance model in Lab space for illumination robustness.
+1. Calibrated empty-belt reference or robust spatial belt model for stronger illumination invariance.
 2. Better single-object temporal association and explicit ambiguity records.
-3. Custom YOLO detector for clutter and exposure variability.
+3. Custom YOLO detector for camouflage, clutter, and exposure variability.
 4. Instance segmentation when touching gloves must be separated.
 
 All upgrades should implement `GloveDetector` and preserve downstream event contracts.

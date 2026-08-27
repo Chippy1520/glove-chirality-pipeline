@@ -9,10 +9,16 @@ import yaml
 
 @dataclass
 class DetectorConfig:
-    backend: str = "dark_contour"
+    backend: str = "belt_foreground"
     roi: tuple[float, float, float, float] = (0.05, 0.05, 0.95, 0.95)
     trigger_zone: tuple[float, float, float, float] = (0.20, 0.15, 0.80, 0.85)
     dark_threshold: int = 105
+    color_distance_threshold: float = 28.0
+    belt_sample_stride: int = 8
+    motion_assist: bool = True
+    mog_history: int = 250
+    mog_var_threshold: float = 16.0
+    mog_learning_rate: float = -1.0
     blur_kernel: int = 7
     morph_kernel: int = 11
     min_area_ratio: float = 0.015

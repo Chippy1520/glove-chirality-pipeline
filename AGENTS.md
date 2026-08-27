@@ -39,7 +39,7 @@ For an NVIDIA GPU, install the PyTorch build matching the machine's CUDA driver 
 
 ## Current baseline
 
-- CPU classical dark-contour detector and optional custom Ultralytics YOLO adapter.
+- Color-agnostic Lab belt-foreground detector, legacy dark-contour fallback, and optional custom Ultralytics YOLO adapter.
 - Shared passage extractor for dataset and deployment modes.
 - TinyCNN, ResNet-18, MobileNetV3-Small, and ViT-B/16 adapters.
 - Explicit `auto/cpu/cuda/cuda:N` controls, CUDA AMP, and DataLoader workers.

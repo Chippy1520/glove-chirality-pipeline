@@ -27,7 +27,8 @@ images + manifest.csv          classifier checkpoint
 
 - Sequential video decoding suitable for MJPEG-in-MKV recordings.
 - Configurable inspection ROI and central trigger zone.
-- CPU `dark_contour` bootstrap detector for dark gloves on a bright/green belt.
+- CPU `belt_foreground` detector combining Lab belt-color distance with optional temporal motion, independent of a specific glove color.
+- Legacy `dark_contour` fallback for controlled dark-glove recordings.
 - Optional Ultralytics YOLO adapter with the same detector interface.
 - Temporal event state machine with confirmation, tracking distance, exit timeout, cooldown, best-frame quality scoring, padded square crops, and exactly one emission per accepted event.
 - Label provenance: left-only/right-only video streams attach known source labels; detection never uses the label.
@@ -84,7 +85,7 @@ Edit `configs/default.yaml` until:
 - `roi` excludes the enclosure/light-strip borders.
 - `trigger_zone` covers only the central illuminated region where a complete glove should be selected.
 - red detector boxes surround gloves but not belt shadows or enclosure borders.
-- `dark_threshold`, area ratios, and morphology work across early/middle/late samples from every source video.
+- `color_distance_threshold`, motion assistance, area ratios, and morphology work across early/middle/late samples and every glove color.
 
 Coordinates are normalized full-frame `[x1, y1, x2, y2]`, so the same config works at 1920x1080 and downscaled test footage.
 
@@ -200,7 +201,7 @@ The integration test generates a deterministic MJPEG synthetic conveyor clip and
 
 ## Current limitations and next research steps
 
-- The classical detector assumes a dark glove against a brighter stable belt. A learned belt-color background model or instance segmentation is a better next backend if exposure, shadows, or touching objects cause errors.
+- The default classical detector supports arbitrary glove colors that differ visually from the dominant belt and uses motion assistance for low color contrast. A glove indistinguishable from the belt still requires temporal evidence, a contrasting belt, or a learned detector; touching objects may require instance segmentation.
 - Current tracking is deliberately lightweight and optimized for one well-spaced passage through the trigger zone. For simultaneous gloves, add multi-object tracks with merge/split ambiguity rejection.
 - No accuracy claim is made without the real data. Keep extraction metrics separate from chirality classification metrics.
 - Because class labels come from different videos, audit models for video/session leakage and capture left and right gloves under matched conditions.

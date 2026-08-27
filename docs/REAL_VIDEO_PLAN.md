@@ -20,7 +20,7 @@ Generate previews at early, middle, and late timestamps:
 glove-pipeline preview --video VIDEO.mkv --seconds 30 --config CONFIG.yaml --output preview.jpg
 ```
 
-Tune ROI and trigger-zone geometry first, then segmentation thresholds. Exclude light strips, enclosure borders, and areas where incomplete distractor gloves dominate.
+Tune ROI and trigger-zone geometry first, then `color_distance_threshold` and motion-background settings across every glove color. Exclude light strips, enclosure borders, and areas where incomplete distractor gloves dominate. Include gloves close to the belt color explicitly; if RGB contrast is physically insufficient, test a custom detector or change the belt/background rather than introducing color-specific thresholds.
 
 ## Phase 2 — passage ground truth
 

@@ -9,7 +9,7 @@ from glove_chirality.config import ExtractionConfig
 def test_default_config_loads():
     path = Path(__file__).parents[1] / "configs" / "default.yaml"
     config = ExtractionConfig.from_yaml(path)
-    assert config.detector.backend == "dark_contour"
+    assert config.detector.backend == "belt_foreground"
     assert config.event.make_square is True
 
 

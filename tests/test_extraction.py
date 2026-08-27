@@ -6,6 +6,7 @@ import pytest
 
 from glove_chirality.config import DetectorConfig, EventConfig, ExtractionConfig
 from glove_chirality.extraction import config_hash, event_rows, extract_video, write_manifest
+from glove_chirality.types import Detection
 
 
 def _synthetic_video(path: Path, glove_color: tuple[int, int, int]):
@@ -56,3 +57,25 @@ def test_extracts_exactly_one_event_and_manifest(tmp_path, glove_color):
     assert manifest.exists()
     assert rows[0]["label"] == "left"
     assert rows[0]["label_provenance"] == "known_stream"
+
+
+def test_multiple_candidates_do_not_create_an_arbitrary_crop(tmp_path, monkeypatch):
+    video = tmp_path / "ambiguous.avi"
+    _synthetic_video(video, (35, 35, 35))
+
+    class AmbiguousDetector:
+        name = "ambiguous"
+        frames = 0
+
+        def detect(self, _frame):
+            self.frames += 1
+            if self.frames <= 3:
+                return [Detection(70, 60, 140, 160, 0.9)]
+            return [
+                Detection(70, 60, 140, 160, 0.9),
+                Detection(180, 60, 250, 160, 0.8),
+            ]
+
+    monkeypatch.setattr("glove_chirality.extraction.build_detector", lambda _config: AmbiguousDetector())
+    events = extract_video(video, tmp_path / "output", "unknown", ExtractionConfig())
+    assert events == []

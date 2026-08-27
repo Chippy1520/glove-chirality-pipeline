@@ -40,6 +40,7 @@ Edit the most frequently calibrated parameters:
 - adaptive empty-belt background learning and empty/foreground learning rates;
 - morphology and component-area limits;
 - event confirmation, exit, and cooldown frames;
+- rejection of frames containing multiple simultaneous candidates;
 - crop padding and square-crop policy.
 
 Load an existing YAML, save changes in place, or save a new copy. Advanced YAML values that are not shown remain intact when editing an existing configuration.

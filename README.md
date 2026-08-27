@@ -4,7 +4,7 @@ A modular computer-vision framework for turning fixed-camera conveyor videos int
 
 The central design rule is that dataset creation and deployment call the **same event extractor**. This prevents train/deployment crop skew.
 
-For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md).
+For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md), and [`docs/DETECTOR_MODEL_OPTIONS.md`](docs/DETECTOR_MODEL_OPTIONS.md).
 
 ## Lightweight desktop GUI
 
@@ -43,6 +43,7 @@ images + manifest.csv          classifier checkpoint
 - Full-containment trigger gating: a glove is eligible only when its entire detected box is inside the trigger zone; partial entry/exit frames are rejected consistently by classical and YOLO backends.
 - Temporal event state machine with confirmation, tracking distance, exit timeout, cooldown, best-frame quality scoring, padded square crops, and exactly one emission per accepted event.
 - Explicit no-glove behavior: empty conveyor frames and long gaps emit no crop or prediction, while adaptive background learning refreshes the belt model between passages.
+- Ambiguity rejection: the single-object extractor does not arbitrarily choose among multiple simultaneous candidates.
 - Label provenance: left-only/right-only video streams attach known source labels; detection never uses the label.
 - Ordinary JPEG crops plus auditable CSV metadata.
 - Grouped train/validation split by source video to prevent adjacent-event leakage.

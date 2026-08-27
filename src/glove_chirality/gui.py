@@ -157,6 +157,7 @@ def main(argv: list[str] | None = None) -> None:
                 "min_area_ratio": tk_module.DoubleVar(value=0.015),
                 "max_area_ratio": tk_module.DoubleVar(value=0.55),
                 "min_detected_frames": tk_module.IntVar(value=2),
+                "reject_multiple_detections": tk_module.BooleanVar(value=True),
                 "exit_missing_frames": tk_module.IntVar(value=5),
                 "cooldown_frames": tk_module.IntVar(value=8),
                 "crop_padding": tk_module.DoubleVar(value=0.12),
@@ -200,6 +201,7 @@ def main(argv: list[str] | None = None) -> None:
             for row, (label, key) in enumerate(event_labels):
                 self._entry(event, ttk_module, row, label, self.setting_vars[key], width=20)
             ttk_module.Checkbutton(event, text="Make exact square crops", variable=self.setting_vars["make_square"]).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=5)
+            ttk_module.Checkbutton(event, text="Reject frames with multiple candidates", variable=self.setting_vars["reject_multiple_detections"]).grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=5)
 
             buttons = ttk_module.Frame(tab)
             buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=10)
@@ -305,7 +307,7 @@ def main(argv: list[str] | None = None) -> None:
                     self.setting_vars[key].set(getattr(detector, key))
                 self.setting_vars["roi"].set(", ".join(str(value) for value in detector.roi))
                 self.setting_vars["trigger_zone"].set(", ".join(str(value) for value in detector.trigger_zone))
-                for key in ("min_detected_frames", "exit_missing_frames", "cooldown_frames", "crop_padding", "make_square"):
+                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "make_square"):
                     self.setting_vars[key].set(getattr(event, key))
                 if not quiet:
                     self._append_log(f"Loaded settings: {self.config_path.get()}\n")
@@ -325,7 +327,7 @@ def main(argv: list[str] | None = None) -> None:
                 detector.trigger_zone = self._parse_box(self.setting_vars["trigger_zone"].get())
                 for key in ("require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
                     setattr(detector, key, self.setting_vars[key].get())
-                for key in ("min_detected_frames", "exit_missing_frames", "cooldown_frames", "crop_padding", "make_square"):
+                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "make_square"):
                     setattr(event, key, self.setting_vars[key].get())
                 detector.validate()
                 config.to_yaml(path)

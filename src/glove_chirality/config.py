@@ -46,6 +46,7 @@ class DetectorConfig:
 @dataclass
 class EventConfig:
     min_detected_frames: int = 2
+    reject_multiple_detections: bool = True
     exit_missing_frames: int = 5
     cooldown_frames: int = 8
     max_track_distance_ratio: float = 0.20

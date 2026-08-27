@@ -140,6 +140,11 @@ def extract_video(
             h, w = frame.shape[:2]
             cooldown = max(0, cooldown - 1)
             detections = detector.detect(frame)
+            ambiguous = config.event.reject_multiple_detections and len(detections) > 1
+            if ambiguous:
+                active, seen, missing, best, last_detection = False, 0, 0, None, None
+                cooldown = config.event.cooldown_frames
+                continue
             chosen: Detection | None = None
             if detections:
                 if last_detection is None:

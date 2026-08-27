@@ -24,7 +24,8 @@ Read, in order:
 3. `docs/ARCHITECTURE.md`
 4. `docs/REAL_VIDEO_PLAN.md`
 5. `docs/GUI.md`
-6. `docs/VERIFICATION_CHECKLIST.md`
+6. `docs/DETECTOR_MODEL_OPTIONS.md`
+7. `docs/VERIFICATION_CHECKLIST.md`
 
 Install and verify:
 

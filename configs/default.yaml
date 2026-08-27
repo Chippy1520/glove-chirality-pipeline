@@ -36,6 +36,9 @@ detector:
 
 event:
   min_detected_frames: 2
+  # The lightweight extractor tracks one well-spaced glove; do not guess when
+  # multiple candidates are visible in the same frame.
+  reject_multiple_detections: true
   exit_missing_frames: 5
   cooldown_frames: 8
   max_track_distance_ratio: 0.20

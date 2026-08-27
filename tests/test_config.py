@@ -12,6 +12,7 @@ def test_default_config_loads():
     assert config.detector.backend == "belt_foreground"
     assert config.detector.require_full_containment is True
     assert config.detector.adaptive_background is True
+    assert config.event.reject_multiple_detections is True
     assert config.event.make_square is True
 
 

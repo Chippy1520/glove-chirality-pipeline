@@ -41,8 +41,8 @@ frame.
 | `live.py` | Bounded capture queue, event-driven live classification, metrics, JSONL sink |
 | `dataset.py` | Manifest loading, source-grouped split, chirality-safe transforms |
 | `models.py` | TinyCNN/ResNet/MobileNet/ViT factory |
-| `training.py` | Class-weighted training, AMP/device controls, metrics/checkpoints |
-| `inference.py` | One-time classifier loading and identical path/array preprocessing |
+| `training.py` | Selectable CE/weighted-CE/recall-hybrid training, AMP/device controls, per-class metrics/checkpoints |
+| `inference.py` | Shared preprocessing plus optional class-specific probability thresholding |
 | `diagnostics.py` | Clean-frame ROI/trigger/mask/candidate calibration preview |
 | `cli.py` | Public offline, training, preview, and live commands |
 | `gui_commands.py` / `gui.py` | GUI-to-CLI construction and Tkinter process controls |
@@ -153,7 +153,21 @@ prefer `infer-video`; `infer-live` is designed for cameras and real-time streams
   ImageNet-normalized.
 - Path and in-memory classifier methods call the same transform.
 - Horizontal reflection is intentionally excluded.
-- Checkpoints store architecture, class order, image size, preprocessing ID, and metrics.
+- Checkpoints store architecture, class order, image size, preprocessing ID, training objective,
+  selection metric, and validation metrics.
+
+## Asymmetric chirality decision policy
+
+The default classifier decision remains `argmax`, preserving historical behavior. Training can
+instead use `recall_hybrid`: weighted cross-entropy plus a differentiable penalty on the
+selected class's soft recall. The best checkpoint can be selected by `recall_right` when a
+right-as-left false negative is the costly error.
+
+At inference, `decision_class=right` applies a threshold directly to right probability. A
+threshold below `0.5` expands the right decision region, trading lower right false negatives
+for more left-as-right false positives. The same `TorchClassifier` decision path is used by
+image, offline-video, and live inference. Thresholds must be selected on locked source-grouped
+validation data; neither the loss nor threshold provides a formal zero-miss guarantee.
 
 ## GPU behavior
 

@@ -32,6 +32,8 @@ def test_output_size_must_be_positive():
 
 
 def test_segmentation_config_validation_is_explicit():
+    with pytest.raises(ValueError, match="Select a custom YOLO detector checkpoint"):
+        DetectorConfig(backend="yolo")
     with pytest.raises(ValueError, match="requires yolo_use_masks"):
         DetectorConfig(yolo_use_masks=False, yolo_require_masks=True)
     with pytest.raises(ValueError, match="yolo_confidence"):

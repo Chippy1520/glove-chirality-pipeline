@@ -25,6 +25,8 @@ def test_train_command_includes_gpu_controls():
     assert command[-1] == "--amp"
     assert command[command.index("--device") + 1] == "cuda:1"
     assert command[command.index("--workers") + 1] == "4"
+    assert command[command.index("--loss") + 1] == "weighted_cross_entropy"
+    assert command[command.index("--selection-metric") + 1] == "macro_recall"
 
 
 def test_preview_command_includes_detector_warmup():
@@ -38,7 +40,17 @@ def test_live_command_includes_source_output_and_amp():
     )
     assert command[command.index("--source") + 1] == "0"
     assert command[command.index("--output") + 1] == "events.jsonl"
+    assert command[command.index("--decision-class") + 1] == "argmax"
+    assert command[command.index("--decision-threshold") + 1] == "0.5"
     assert command[-1] == "--amp"
+
+
+def test_inference_command_can_prioritize_right_recall():
+    command = gui_commands.infer_video(
+        "video.mkv", "model.pt", "output", "config.yaml", "auto", "right", 0.2
+    )
+    assert command[command.index("--decision-class") + 1] == "right"
+    assert command[command.index("--decision-threshold") + 1] == "0.2"
 
 
 def test_required_gui_fields_fail_early():

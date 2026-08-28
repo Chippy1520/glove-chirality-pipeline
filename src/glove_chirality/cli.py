@@ -43,6 +43,21 @@ def _extract_sources(sources, output: Path, config: ExtractionConfig):
     return all_events
 
 
+def _add_decision_arguments(parser) -> None:
+    parser.add_argument(
+        "--decision-class",
+        choices=["argmax", "left", "right"],
+        default="argmax",
+        help="Target class for thresholding; use right for right-glove recall",
+    )
+    parser.add_argument(
+        "--decision-threshold",
+        type=float,
+        default=0.5,
+        help="Predict the decision class at or above this probability",
+    )
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="glove-pipeline",
@@ -93,12 +108,31 @@ def build_parser():
     train.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
     train.add_argument("--amp", action="store_true", help="Use CUDA mixed precision")
     train.add_argument("--workers", type=int, default=0, help="DataLoader worker processes")
+    train.add_argument(
+        "--loss",
+        choices=["cross_entropy", "weighted_cross_entropy", "recall_hybrid"],
+        default="weighted_cross_entropy",
+    )
+    train.add_argument("--recall-target", choices=["left", "right"], default="right")
+    train.add_argument(
+        "--recall-weight",
+        type=float,
+        default=1.0,
+        help="Soft-recall penalty strength for recall_hybrid loss",
+    )
+    train.add_argument(
+        "--selection-metric",
+        choices=["accuracy", "macro_recall", "macro_f1", "recall_left", "recall_right"],
+        default="macro_recall",
+        help="Validation metric used to retain the best checkpoint",
+    )
 
     images = sub.add_parser("infer-images", help="Classify a crop or crop directory")
     images.add_argument("--input", required=True)
     images.add_argument("--checkpoint", required=True)
     images.add_argument("--output", required=True)
     images.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
+    _add_decision_arguments(images)
 
     video = sub.add_parser("infer-video", help="Extract passages and classify each one")
     video.add_argument("--video", required=True)
@@ -107,6 +141,7 @@ def build_parser():
     video.add_argument("--config", default="configs/default.yaml")
     video.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
     video.add_argument("--amp", action="store_true", help="Use classifier CUDA AMP")
+    _add_decision_arguments(video)
 
     live = sub.add_parser(
         "infer-live",
@@ -117,6 +152,7 @@ def build_parser():
     live.add_argument("--config", default="configs/production.yaml")
     live.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
     live.add_argument("--amp", action="store_true", help="Use classifier CUDA AMP")
+    _add_decision_arguments(live)
     live.add_argument(
         "--output",
         default="-",
@@ -133,7 +169,13 @@ def _infer_video(args) -> None:
     run = extract_video_with_report(args.video, output, "unknown", config)
     write_manifest(event_rows(run.events, output, config_hash(config)), output / "manifest.csv")
     write_event_report(event_report_rows(run.records), output / "event_report.csv")
-    classifier = TorchClassifier(args.checkpoint, device=args.device, amp=args.amp)
+    classifier = TorchClassifier(
+        args.checkpoint,
+        device=args.device,
+        amp=args.amp,
+        decision_class=args.decision_class,
+        decision_threshold=args.decision_threshold,
+    )
     prediction_path = output / "predictions.csv"
     with prediction_path.open("w", newline="", encoding="utf-8") as stream:
         fields = [
@@ -205,12 +247,23 @@ def main(argv=None):
             device_name=args.device,
             amp=args.amp,
             workers=args.workers,
+            loss_name=args.loss,
+            recall_target=args.recall_target,
+            recall_weight=args.recall_weight,
+            selection_metric=args.selection_metric,
         )
         print(json.dumps(metrics, indent=2))
     elif args.command == "infer-images":
         from glove_chirality.inference import infer_images
 
-        rows = infer_images(args.input, args.checkpoint, args.output, device=args.device)
+        rows = infer_images(
+            args.input,
+            args.checkpoint,
+            args.output,
+            device=args.device,
+            decision_class=args.decision_class,
+            decision_threshold=args.decision_threshold,
+        )
         print(f"Wrote {len(rows)} predictions to {args.output}")
     elif args.command == "infer-video":
         _infer_video(args)
@@ -224,6 +277,8 @@ def main(argv=None):
             device=args.device,
             amp=args.amp,
             output=args.output,
+            decision_class=args.decision_class,
+            decision_threshold=args.decision_threshold,
         )
         print(json.dumps(asdict(metrics)), file=sys.stderr)
 

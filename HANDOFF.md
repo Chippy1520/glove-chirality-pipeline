@@ -36,8 +36,9 @@ Expected data inventory, not stored here:
 - Segmentation preview overlays masks, tight boxes, confidence, candidate count, partial/edge diagnostics, and ambiguity.
 - Bounded-queue `infer-live` with stale-frame dropping, one classifier call per accepted passage, JSONL output, model warm-up, and rolling runtime metrics.
 - Model factory: TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16.
-- Source-video-grouped validation split and class-weighted training.
-- Accuracy, balanced accuracy, macro-F1, and confusion matrix output.
+- Source-video-grouped validation split and selectable cross-entropy, weighted-cross-entropy, or recall-hybrid training.
+- Accuracy, macro recall/balanced accuracy, per-class precision/recall, macro-F1, and confusion matrix output; checkpoints can be selected by right recall.
+- Optional right-class inference threshold shared by image, offline-video, and live modes for the explicit recall/precision trade-off.
 - Explicit CPU/GPU selection, CUDA mixed precision, and loader worker controls.
 - Lightweight Tkinter GUI for paths, common YAML settings, extraction, training, and inference.
 - Synthetic MJPEG integration test and GitHub Actions CI.

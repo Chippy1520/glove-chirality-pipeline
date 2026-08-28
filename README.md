@@ -175,7 +175,22 @@ glove-pipeline train \
 
 Choices: `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, `vit_b_16`.
 
-`--device auto` uses CUDA when available; `cpu`, `cuda`, and `cuda:N` are explicit alternatives. `--amp` enables CUDA mixed precision. The split is by **source video**, not random images. Horizontal flipping is intentionally absent because a reflection can alter chirality semantics. Training uses class-weighted loss, selects checkpoints by validation balanced accuracy, and writes accuracy, balanced accuracy, macro-F1, and a confusion matrix to `<checkpoint>.metrics.json`. With only three right-glove videos, report per-video results and uncertainty; collect both classes under matched recording conditions to reduce background/session leakage.
+`--device auto` uses CUDA when available; `cpu`, `cuda`, and `cuda:N` are explicit alternatives. `--amp` enables CUDA mixed precision. The split is by **source video**, not random images. Horizontal flipping is intentionally absent because a reflection can alter chirality semantics.
+
+Training loss and checkpoint selection are explicit. `weighted_cross_entropy` is the backward-compatible default; `cross_entropy` removes class weighting. When a missed right glove is costlier than a false right alarm, use the experimental hybrid objective and retain the checkpoint with the highest held-out right recall:
+
+```bash
+glove-pipeline train \
+  --manifest data/chirality_v1/manifest.csv \
+  --model resnet18 \
+  --loss recall_hybrid \
+  --recall-target right \
+  --recall-weight 2.0 \
+  --selection-metric recall_right \
+  --output checkpoints/resnet18_right_recall.pt
+```
+
+The metrics sidecar records accuracy, macro recall/balanced accuracy, per-class precision and recall, macro-F1, and the confusion matrix. Increasing the recall penalty is not a substitute for source-grouped validation.
 
 ## 5. Inference
 
@@ -187,6 +202,19 @@ glove-pipeline infer-images \
   --checkpoint checkpoints/resnet18_best.pt \
   --output outputs/image_predictions.csv
 ```
+
+To bias deployment toward **right-glove recall**, select `right` as the thresholded class and use a threshold below `0.5`:
+
+```bash
+glove-pipeline infer-images \
+  --input data/chirality_v1/images \
+  --checkpoint checkpoints/resnet18_right_recall.pt \
+  --decision-class right \
+  --decision-threshold 0.25 \
+  --output outputs/right_recall_predictions.csv
+```
+
+A right probability at or above `0.25` is then reported as right even when left has the larger probability. Lower thresholds reduce right-as-left false negatives but increase left-as-right false positives. Choose the threshold only on locked, source-grouped validation sessions and report right recall, right precision, and the confusion matrix. This option changes Layer-2 classification only; it cannot recover a glove missed by the Layer-1 detector/extractor.
 
 End-to-end deployment on a video uses the same extraction code as training:
 
@@ -217,7 +245,9 @@ The capture thread uses a bounded queue and discards stale frames instead of acc
 
 ## Production YOLO11n-seg configuration
 
-The detector is deliberately single-class (`class 0 = glove`); chirality remains downstream. A complete example is committed at [`configs/production.yaml`](configs/production.yaml):
+The detector is deliberately single-class (`class 0 = glove`); chirality remains downstream. In the GUI, open **Extraction settings**, browse to the collaborator's trained `best.pt` under **Layer 1 — custom YOLO segmentation**, and save the configuration. Selection automatically switches the backend to YOLO, sets class 0, requires masks, and enables ROI-only inference. The checkpoint selected later on the **Inference** tab is a different Layer-2 model: it classifies the accepted crop as left/right.
+
+A complete YAML example is committed at [`configs/production.yaml`](configs/production.yaml):
 
 ```yaml
 detector:

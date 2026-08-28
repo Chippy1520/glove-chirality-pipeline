@@ -7,6 +7,15 @@ from pathlib import Path
 from glove_chirality.dataset import CLASSES, ManifestDataset, grouped_split, read_manifest
 from glove_chirality.models import build_model
 
+LOSS_CHOICES = ("cross_entropy", "weighted_cross_entropy", "recall_hybrid")
+SELECTION_METRICS = (
+    "accuracy",
+    "macro_recall",
+    "macro_f1",
+    "recall_left",
+    "recall_right",
+)
+
 
 def classification_metrics(targets: list[int], predictions: list[int], classes: int = 2):
     confusion = [[0 for _ in range(classes)] for _ in range(classes)]
@@ -14,7 +23,7 @@ def classification_metrics(targets: list[int], predictions: list[int], classes: 
         confusion[target][prediction] += 1
     total = sum(sum(row) for row in confusion)
     accuracy = sum(confusion[index][index] for index in range(classes)) / max(total, 1)
-    recalls, f1_scores = [], []
+    recalls, precisions, f1_scores = [], [], []
     for index in range(classes):
         true_positive = confusion[index][index]
         false_negative = sum(confusion[index]) - true_positive
@@ -22,13 +31,62 @@ def classification_metrics(targets: list[int], predictions: list[int], classes: 
         recall = true_positive / max(true_positive + false_negative, 1)
         precision = true_positive / max(true_positive + false_positive, 1)
         recalls.append(recall)
+        precisions.append(precision)
         f1_scores.append(2 * precision * recall / max(precision + recall, 1e-12))
     return {
         "accuracy": accuracy,
         "balanced_accuracy": sum(recalls) / classes,
+        "macro_recall": sum(recalls) / classes,
         "macro_f1": sum(f1_scores) / classes,
+        "recall_per_class": recalls,
+        "precision_per_class": precisions,
         "confusion_matrix": confusion,
     }
+
+
+def metric_score(metrics: dict[str, object], metric: str, class_names=CLASSES) -> float:
+    if metric in {"accuracy", "macro_recall", "macro_f1"}:
+        return float(metrics[metric])
+    if metric.startswith("recall_"):
+        label = metric.removeprefix("recall_")
+        if label not in class_names:
+            raise ValueError(f"Unknown recall target: {label}")
+        recalls = metrics["recall_per_class"]
+        return float(recalls[class_names.index(label)])
+    raise ValueError(f"Unknown selection metric: {metric}")
+
+
+def build_training_loss(
+    torch,
+    name: str,
+    class_weights,
+    recall_target_index: int,
+    recall_weight: float,
+):
+    if name not in LOSS_CHOICES:
+        raise ValueError(f"Unknown training loss: {name}")
+    if recall_weight < 0.0:
+        raise ValueError("recall_weight must be non-negative")
+    weights = class_weights if name != "cross_entropy" else None
+    cross_entropy = torch.nn.CrossEntropyLoss(weight=weights)
+    if name != "recall_hybrid":
+        return cross_entropy
+
+    class RecallHybridLoss(torch.nn.Module):
+        def forward(self, logits, targets):
+            ce_loss = cross_entropy(logits, targets)
+            target_mask = targets == recall_target_index
+            target_count = target_mask.sum()
+            target_probability = torch.softmax(logits, dim=1)[:, recall_target_index]
+            soft_recall = (target_probability * target_mask).sum() / target_count.clamp_min(1)
+            recall_penalty = torch.where(
+                target_count > 0,
+                1.0 - soft_recall,
+                torch.zeros_like(soft_recall),
+            )
+            return ce_loss + recall_weight * recall_penalty
+
+    return RecallHybridLoss()
 
 
 def train_classifier(
@@ -44,6 +102,10 @@ def train_classifier(
     device_name: str = "auto",
     amp: bool = False,
     workers: int = 0,
+    loss_name: str = "weighted_cross_entropy",
+    recall_target: str = "right",
+    recall_weight: float = 1.0,
+    selection_metric: str = "macro_recall",
 ) -> dict[str, object]:
     try:
         import torch
@@ -52,6 +114,10 @@ def train_classifier(
         raise RuntimeError("Training requires: pip install -e .[ml]") from exc
 
     torch.manual_seed(seed)
+    if recall_target not in CLASSES:
+        raise ValueError(f"recall_target must be one of: {', '.join(CLASSES)}")
+    if selection_metric not in SELECTION_METRICS:
+        raise ValueError(f"selection_metric must be one of: {', '.join(SELECTION_METRICS)}")
     rows = read_manifest(manifest)
     train_rows, validation_rows = grouped_split(rows, validation_fraction, seed)
     if device_name == "auto":
@@ -79,13 +145,20 @@ def train_classifier(
         dtype=torch.float32,
         device=device,
     )
-    loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
+    loss_fn = build_training_loss(
+        torch,
+        loss_name,
+        class_weights,
+        CLASSES.index(recall_target),
+        recall_weight,
+    )
     use_amp = amp and device.type == "cuda"
     if hasattr(torch.amp, "GradScaler"):
         scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     else:  # PyTorch 2.2 compatibility
         scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     best_score = -1.0
+    best_tiebreak = -1.0
     best_metrics: dict[str, object] = {}
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -114,12 +187,14 @@ def train_classifier(
         print(
             f"epoch={epoch + 1}/{epochs} "
             f"val_accuracy={metrics['accuracy']:.4f} "
-            f"val_balanced_accuracy={metrics['balanced_accuracy']:.4f} "
+            f"val_macro_recall={metrics['macro_recall']:.4f} "
+            f"val_recall_right={metrics['recall_per_class'][CLASSES.index('right')]:.4f} "
             f"val_macro_f1={metrics['macro_f1']:.4f}"
         )
-        score = float(metrics["balanced_accuracy"])
-        if score > best_score:
-            best_score, best_metrics = score, metrics
+        score = metric_score(metrics, selection_metric)
+        tiebreak = float(metrics["macro_f1"])
+        if score > best_score or (score == best_score and tiebreak > best_tiebreak):
+            best_score, best_tiebreak, best_metrics = score, tiebreak, metrics
             torch.save(
                 {
                     "state_dict": model.state_dict(),
@@ -127,6 +202,10 @@ def train_classifier(
                     "classes": CLASSES,
                     "image_size": image_size,
                     "preprocessing": "imagenet_rgb_normalized_no_reflection",
+                    "training_loss": loss_name,
+                    "recall_target": recall_target,
+                    "recall_weight": recall_weight,
+                    "selection_metric": selection_metric,
                     "validation_metrics": metrics,
                 },
                 output,
@@ -137,6 +216,10 @@ def train_classifier(
         "device": str(device),
         "mixed_precision": use_amp,
         "workers": workers,
+        "training_loss": loss_name,
+        "recall_target": recall_target,
+        "recall_weight": recall_weight,
+        "selection_metric": selection_metric,
         "train_samples": len(train_rows),
         "validation_samples": len(validation_rows),
         "best_validation": best_metrics,

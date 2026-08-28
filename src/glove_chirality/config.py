@@ -30,7 +30,7 @@ class DetectorConfig:
     min_area_ratio: float = 0.015
     max_area_ratio: float = 0.55
     min_solidity: float = 0.35
-    yolo_model: str = "yolo11n.pt"
+    yolo_model: str = ""
     yolo_confidence: float = 0.35
     yolo_class_id: int | None = None
     yolo_device: str = "auto"
@@ -61,6 +61,10 @@ class DetectorConfig:
             raise ValueError("yolo_confidence must be in [0.0, 1.0]")
         if self.yolo_class_id is not None and self.yolo_class_id < 0:
             raise ValueError("yolo_class_id must be non-negative or null")
+        if self.backend == "yolo" and not self.yolo_model.strip():
+            raise ValueError(
+                "Select a custom YOLO detector checkpoint before using backend=yolo"
+            )
         if self.yolo_require_masks and not self.yolo_use_masks:
             raise ValueError("yolo_require_masks requires yolo_use_masks=true")
         if self.yolo_imgsz <= 0:

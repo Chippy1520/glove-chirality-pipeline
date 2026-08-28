@@ -11,6 +11,26 @@ import yaml
 from glove_chirality import gui_commands
 from glove_chirality.config import ExtractionConfig
 
+CUSTOM_YOLO_SUFFIXES = {".pt", ".pth", ".onnx", ".engine", ".torchscript"}
+
+
+def custom_yolo_segmentation_preset(model_path: str | Path) -> dict[str, object]:
+    """Return safe Layer-1 defaults for a selected custom glove segmenter."""
+    path = Path(model_path).expanduser()
+    if not path.is_file():
+        raise ValueError(f"Custom YOLO model not found: {path}")
+    if path.suffix.lower() not in CUSTOM_YOLO_SUFFIXES:
+        supported = ", ".join(sorted(CUSTOM_YOLO_SUFFIXES))
+        raise ValueError(f"Unsupported YOLO model format {path.suffix!r}; use {supported}")
+    return {
+        "backend": "yolo",
+        "yolo_model": str(path.resolve()),
+        "yolo_class_id": 0,
+        "yolo_use_masks": True,
+        "yolo_require_masks": True,
+        "yolo_crop_to_roi": True,
+    }
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Glove Chirality Pipeline GUI")
@@ -62,7 +82,17 @@ def main(argv: list[str] | None = None) -> None:
             parent.columnconfigure(1, weight=1)
             return entry
 
-        def _path_row(self, parent, ttk_module, filedialog_module, row, label, variable, mode):
+        def _path_row(
+            self,
+            parent,
+            ttk_module,
+            filedialog_module,
+            row,
+            label,
+            variable,
+            mode,
+            on_selected=None,
+        ):
             self._entry(parent, ttk_module, row, label, variable)
 
             def browse():
@@ -84,6 +114,13 @@ def main(argv: list[str] | None = None) -> None:
                     value = filedialog_module.askopenfilename(filetypes=[("Images", "*.jpg *.jpeg *.png *.bmp *.webp"), ("All files", "*.*")])
                 elif mode == "model":
                     value = filedialog_module.askopenfilename(filetypes=[("PyTorch", "*.pt *.pth"), ("All files", "*.*")])
+                elif mode == "detector-model":
+                    value = filedialog_module.askopenfilename(
+                        filetypes=[
+                            ("Ultralytics detector", "*.pt *.pth *.onnx *.engine *.torchscript"),
+                            ("All files", "*.*"),
+                        ]
+                    )
                 elif mode == "yaml":
                     value = filedialog_module.askopenfilename(filetypes=[("YAML", "*.yaml *.yml"), ("All files", "*.*")])
                 elif mode == "csv":
@@ -92,6 +129,8 @@ def main(argv: list[str] | None = None) -> None:
                     value = filedialog_module.askopenfilename()
                 if value:
                     variable.set(value)
+                    if on_selected is not None:
+                        on_selected(value)
 
             ttk_module.Button(parent, text="Browse…", command=browse).grid(row=row, column=2, padx=8, pady=5)
             if mode in {"video-or-directory", "image-or-directory"}:
@@ -143,7 +182,7 @@ def main(argv: list[str] | None = None) -> None:
         def _settings_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
             tab = ttk_module.Frame(self.notebook, padding=10)
             self.notebook.add(tab, text="Extraction settings")
-            ttk_module.Label(tab, text="Color-agnostic detector and passage settings", style="Title.TLabel").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+            ttk_module.Label(tab, text="Layer 1 detector, event selection, and crop settings", style="Title.TLabel").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
             self._path_row(tab, ttk_module, filedialog_module, 1, "Config file", self.config_path, "yaml")
 
             self.setting_vars = {
@@ -160,8 +199,9 @@ def main(argv: list[str] | None = None) -> None:
                 "morph_kernel": tk_module.IntVar(value=11),
                 "min_area_ratio": tk_module.DoubleVar(value=0.015),
                 "max_area_ratio": tk_module.DoubleVar(value=0.55),
-                "yolo_model": tk_module.StringVar(value="yolo11n.pt"),
+                "yolo_model": tk_module.StringVar(value=""),
                 "yolo_confidence": tk_module.DoubleVar(value=0.35),
+                "yolo_class_id": tk_module.IntVar(value=0),
                 "yolo_device": tk_module.StringVar(value="auto"),
                 "yolo_half": tk_module.BooleanVar(value=False),
                 "yolo_imgsz": tk_module.IntVar(value=640),
@@ -183,7 +223,7 @@ def main(argv: list[str] | None = None) -> None:
             detector.grid(row=2, column=0, sticky="nsew", padx=(0, 5), pady=5)
             event = ttk_module.LabelFrame(tab, text="Passage and crop", style="Section.TLabelframe", padding=8)
             event.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
-            yolo = ttk_module.LabelFrame(tab, text="YOLO segmentation", style="Section.TLabelframe", padding=8)
+            yolo = ttk_module.LabelFrame(tab, text="Layer 1 — custom YOLO segmentation", style="Section.TLabelframe", padding=8)
             yolo.grid(row=2, column=2, sticky="nsew", padx=(5, 0), pady=5)
             tab.columnconfigure((0, 1, 2), weight=1)
 
@@ -224,9 +264,37 @@ def main(argv: list[str] | None = None) -> None:
             ttk_module.Label(event, text="Crop mode").grid(row=len(event_labels) + 2, column=0, sticky="w", padx=6, pady=5)
             ttk_module.Combobox(event, textvariable=self.setting_vars["crop_mode"], values=("bbox", "masked", "masked_fill"), state="readonly", width=16).grid(row=len(event_labels) + 2, column=1, sticky="w", padx=6, pady=5)
 
-            self._entry(yolo, ttk_module, 0, "Model path", self.setting_vars["yolo_model"], width=18)
+            self.yolo_status = tk_module.StringVar(
+                value="Choose the trained glove segmentation checkpoint (usually best.pt)."
+            )
+
+            def apply_custom_yolo(value=None):
+                try:
+                    settings = custom_yolo_segmentation_preset(
+                        value or self.setting_vars["yolo_model"].get()
+                    )
+                    for key, setting in settings.items():
+                        self.setting_vars[key].set(setting)
+                    self.yolo_status.set(
+                        "Custom Layer 1 enabled: class 0 = glove, masks required, "
+                        "ROI-only inference. Save settings, then validate with Calibration preview."
+                    )
+                except (OSError, TypeError, ValueError) as exc:
+                    messagebox_module.showerror("Could not apply custom detector", str(exc))
+
+            self._path_row(
+                yolo,
+                ttk_module,
+                filedialog_module,
+                0,
+                "Custom model",
+                self.setting_vars["yolo_model"],
+                "detector-model",
+                on_selected=apply_custom_yolo,
+            )
             yolo_labels = [
                 ("Confidence", "yolo_confidence"),
+                ("Glove class ID", "yolo_class_id"),
                 ("Device", "yolo_device"),
                 ("Image size", "yolo_imgsz"),
                 ("IoU threshold", "yolo_iou"),
@@ -241,6 +309,18 @@ def main(argv: list[str] | None = None) -> None:
                 ("Run YOLO on ROI only", "yolo_crop_to_roi"),
             ], len(yolo_labels) + 1):
                 ttk_module.Checkbutton(yolo, text=label, variable=self.setting_vars[key]).grid(row=row, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+            preset_row = len(yolo_labels) + 5
+            ttk_module.Button(
+                yolo,
+                text="Apply as custom Layer 1 model",
+                command=apply_custom_yolo,
+            ).grid(row=preset_row, column=0, columnspan=3, sticky="ew", padx=6, pady=(8, 4))
+            ttk_module.Label(
+                yolo,
+                textvariable=self.yolo_status,
+                wraplength=300,
+                foreground="#3b5f7a",
+            ).grid(row=preset_row + 1, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
 
             buttons = ttk_module.Frame(tab)
             buttons.grid(row=3, column=0, columnspan=3, sticky="e", pady=10)
@@ -271,6 +351,10 @@ def main(argv: list[str] | None = None) -> None:
             self.train_lr, self.train_val = tk_module.DoubleVar(value=0.001), tk_module.DoubleVar(value=0.2)
             self.train_seed, self.train_workers = tk_module.IntVar(value=42), tk_module.IntVar(value=0)
             self.train_amp = tk_module.BooleanVar(value=False)
+            self.train_loss = tk_module.StringVar(value="weighted_cross_entropy")
+            self.train_recall_target = tk_module.StringVar(value="right")
+            self.train_recall_weight = tk_module.DoubleVar(value=1.0)
+            self.train_selection_metric = tk_module.StringVar(value="macro_recall")
             self._path_row(tab, ttk_module, filedialog_module, 1, "Dataset manifest", self.train_manifest, "csv")
             self._path_row(tab, ttk_module, filedialog_module, 2, "Checkpoint output", self.train_output, "save-model")
             fields = [
@@ -280,25 +364,36 @@ def main(argv: list[str] | None = None) -> None:
                 ("Image size", self.train_size, None), ("Learning rate", self.train_lr, None),
                 ("Validation fraction", self.train_val, None), ("Seed", self.train_seed, None),
                 ("DataLoader workers", self.train_workers, None),
+                ("Loss", self.train_loss, ("cross_entropy", "weighted_cross_entropy", "recall_hybrid")),
+                ("Recall target", self.train_recall_target, ("left", "right")),
+                ("Recall penalty weight", self.train_recall_weight, None),
+                ("Best-checkpoint metric", self.train_selection_metric, ("accuracy", "macro_recall", "macro_f1", "recall_left", "recall_right")),
             ]
             for index, (label, variable, values) in enumerate(fields):
                 row, column = 3 + index // 2, (index % 2) * 2
                 ttk_module.Label(tab, text=label).grid(row=row, column=column, sticky="w", padx=8, pady=6)
                 widget = ttk_module.Combobox(tab, textvariable=variable, values=values, width=22) if values else ttk_module.Entry(tab, textvariable=variable, width=24)
                 widget.grid(row=row, column=column + 1, sticky="w", padx=8, pady=6)
-            ttk_module.Checkbutton(tab, text="CUDA mixed precision (AMP)", variable=self.train_amp).grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=8)
-            ttk_module.Button(tab, text="Start training", style="Run.TButton", command=lambda: self._guard(messagebox_module, lambda: gui_commands.train(self.train_manifest.get(), self.train_output.get(), self.train_model.get(), self.train_epochs.get(), self.train_batch.get(), self.train_size.get(), self.train_lr.get(), self.train_val.get(), self.train_seed.get(), self.train_device.get(), self.train_workers.get(), self.train_amp.get()))).grid(row=9, column=2, columnspan=2, sticky="e", padx=8, pady=12)
+            final_field_row = 3 + (len(fields) - 1) // 2
+            ttk_module.Checkbutton(tab, text="CUDA mixed precision (AMP)", variable=self.train_amp).grid(row=final_field_row + 1, column=0, columnspan=2, sticky="w", padx=8, pady=8)
+            ttk_module.Button(tab, text="Start training", style="Run.TButton", command=lambda: self._guard(messagebox_module, lambda: gui_commands.train(self.train_manifest.get(), self.train_output.get(), self.train_model.get(), self.train_epochs.get(), self.train_batch.get(), self.train_size.get(), self.train_lr.get(), self.train_val.get(), self.train_seed.get(), self.train_device.get(), self.train_workers.get(), self.train_amp.get(), self.train_loss.get(), self.train_recall_target.get(), self.train_recall_weight.get(), self.train_selection_metric.get()))).grid(row=final_field_row + 2, column=2, columnspan=2, sticky="e", padx=8, pady=12)
 
         def _inference_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
             tab = ttk_module.Frame(self.notebook, padding=10)
             self.notebook.add(tab, text="Inference")
-            ttk_module.Label(tab, text="Apply a trained checkpoint", style="Title.TLabel").pack(anchor="w", pady=(0, 8))
+            ttk_module.Label(tab, text="Layer 2 — classify each accepted glove crop", style="Title.TLabel").pack(anchor="w", pady=(0, 8))
             self.infer_checkpoint, self.infer_device = tk_module.StringVar(), tk_module.StringVar(value="auto")
-            shared = ttk_module.LabelFrame(tab, text="Model", style="Section.TLabelframe", padding=8)
+            self.infer_decision_class = tk_module.StringVar(value="argmax")
+            self.infer_decision_threshold = tk_module.DoubleVar(value=0.5)
+            shared = ttk_module.LabelFrame(tab, text="Chirality classifier (separate from Layer 1 detector)", style="Section.TLabelframe", padding=8)
             shared.pack(fill="x", pady=5)
-            self._path_row(shared, ttk_module, filedialog_module, 0, "Checkpoint", self.infer_checkpoint, "model")
+            self._path_row(shared, ttk_module, filedialog_module, 0, "Classifier checkpoint", self.infer_checkpoint, "model")
             ttk_module.Label(shared, text="Device").grid(row=1, column=0, sticky="w", padx=8, pady=5)
             ttk_module.Combobox(shared, textvariable=self.infer_device, values=("auto", "cpu", "cuda", "cuda:0", "cuda:1"), width=18).grid(row=1, column=1, sticky="w", padx=8, pady=5)
+            ttk_module.Label(shared, text="Recall-priority class").grid(row=2, column=0, sticky="w", padx=8, pady=5)
+            ttk_module.Combobox(shared, textvariable=self.infer_decision_class, values=("argmax", "left", "right"), state="readonly", width=18).grid(row=2, column=1, sticky="w", padx=8, pady=5)
+            self._entry(shared, ttk_module, 3, "Class probability threshold", self.infer_decision_threshold, width=20)
+            ttk_module.Label(shared, text="For higher right-glove recall, select right and lower the threshold below 0.5; validate the resulting false alarms on held-out sessions.", wraplength=760, foreground="#7a4e20").grid(row=4, column=0, columnspan=3, sticky="w", padx=8, pady=5)
 
             video = ttk_module.LabelFrame(tab, text="Full video inference", style="Section.TLabelframe", padding=8)
             video.pack(fill="x", pady=5)
@@ -306,7 +401,7 @@ def main(argv: list[str] | None = None) -> None:
             self._path_row(video, ttk_module, filedialog_module, 0, "Video", self.infer_video_path, "video")
             self._path_row(video, ttk_module, filedialog_module, 1, "Output directory", self.infer_video_output, "directory")
             self._config_row(video, ttk_module, filedialog_module, 2)
-            ttk_module.Button(video, text="Run video inference", style="Run.TButton", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_video(self.infer_video_path.get(), self.infer_checkpoint.get(), self.infer_video_output.get(), self.config_path.get(), self.infer_device.get()))).grid(row=3, column=1, sticky="e", padx=8, pady=8)
+            ttk_module.Button(video, text="Run video inference", style="Run.TButton", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_video(self.infer_video_path.get(), self.infer_checkpoint.get(), self.infer_video_output.get(), self.config_path.get(), self.infer_device.get(), self.infer_decision_class.get(), self.infer_decision_threshold.get()))).grid(row=3, column=1, sticky="e", padx=8, pady=8)
 
             live = ttk_module.LabelFrame(tab, text="Real-time event inference", style="Section.TLabelframe", padding=8)
             live.pack(fill="x", pady=5)
@@ -318,7 +413,7 @@ def main(argv: list[str] | None = None) -> None:
             ttk_module.Checkbutton(live, text="Classifier CUDA AMP", variable=self.live_amp).grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=5)
             live_buttons = ttk_module.Frame(live)
             live_buttons.grid(row=3, column=1, sticky="e", padx=8, pady=8)
-            ttk_module.Button(live_buttons, text="Start", style="Run.TButton", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_live(self.live_source.get(), self.infer_checkpoint.get(), self.live_output.get(), self.config_path.get(), self.infer_device.get(), self.live_amp.get()))).pack(side="left", padx=4)
+            ttk_module.Button(live_buttons, text="Start", style="Run.TButton", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_live(self.live_source.get(), self.infer_checkpoint.get(), self.live_output.get(), self.config_path.get(), self.infer_device.get(), self.live_amp.get(), self.infer_decision_class.get(), self.infer_decision_threshold.get()))).pack(side="left", padx=4)
             ttk_module.Button(live_buttons, text="Stop", command=self._stop).pack(side="left", padx=4)
 
             images = ttk_module.LabelFrame(tab, text="Existing crop inference", style="Section.TLabelframe", padding=8)
@@ -326,7 +421,7 @@ def main(argv: list[str] | None = None) -> None:
             self.infer_images_input, self.infer_images_output = tk_module.StringVar(), tk_module.StringVar()
             self._path_row(images, ttk_module, filedialog_module, 0, "Crop/image input", self.infer_images_input, "image-or-directory")
             self._path_row(images, ttk_module, filedialog_module, 1, "Prediction CSV", self.infer_images_output, "save-csv")
-            ttk_module.Button(images, text="Classify images", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_images(self.infer_images_input.get(), self.infer_checkpoint.get(), self.infer_images_output.get(), self.infer_device.get()))).grid(row=2, column=1, sticky="e", padx=8, pady=8)
+            ttk_module.Button(images, text="Classify images", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_images(self.infer_images_input.get(), self.infer_checkpoint.get(), self.infer_images_output.get(), self.infer_device.get(), self.infer_decision_class.get(), self.infer_decision_threshold.get()))).grid(row=2, column=1, sticky="e", padx=8, pady=8)
 
         def _log_panel(self, tk_module, ttk_module, scrolledtext_module):
             tab = ttk_module.Frame(self.notebook, padding=10)
@@ -355,12 +450,23 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 config = ExtractionConfig.from_yaml(self.config_path.get())
                 detector, event = config.detector, config.event
-                for key in ("backend", "require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
-                    self.setting_vars[key].set(getattr(detector, key))
+                for key in ("backend", "require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_class_id", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
+                    value = getattr(detector, key)
+                    if key == "yolo_class_id" and value is None:
+                        value = 0
+                    self.setting_vars[key].set(value)
                 self.setting_vars["roi"].set(", ".join(str(value) for value in detector.roi))
                 self.setting_vars["trigger_zone"].set(", ".join(str(value) for value in detector.trigger_zone))
                 for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "crop_mode", "output_size", "make_square"):
                     self.setting_vars[key].set(getattr(event, key))
+                if detector.backend == "yolo" and detector.yolo_model:
+                    self.yolo_status.set(
+                        "Loaded custom Layer 1 detector. Use Calibration preview before extraction."
+                    )
+                else:
+                    self.yolo_status.set(
+                        "Choose the trained glove segmentation checkpoint (usually best.pt)."
+                    )
                 if not quiet:
                     self._append_log(f"Loaded settings: {self.config_path.get()}\n")
             except (OSError, TypeError, ValueError, yaml.YAMLError, tk.TclError) as exc:
@@ -377,7 +483,7 @@ def main(argv: list[str] | None = None) -> None:
                 detector.backend = self.setting_vars["backend"].get()
                 detector.roi = self._parse_box(self.setting_vars["roi"].get())
                 detector.trigger_zone = self._parse_box(self.setting_vars["trigger_zone"].get())
-                for key in ("require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
+                for key in ("require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_class_id", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
                     setattr(detector, key, self.setting_vars[key].get())
                 for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "crop_mode", "output_size", "make_square"):
                     setattr(event, key, self.setting_vars[key].get())

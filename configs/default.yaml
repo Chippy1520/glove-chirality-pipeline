@@ -28,7 +28,9 @@ detector:
   min_area_ratio: 0.015
   max_area_ratio: 0.55
   min_solidity: 0.35
-  yolo_model: yolo11n.pt
+  # Choose your trained single-class segmentation checkpoint in the GUI.
+  # Do not use generic COCO yolo11n.pt as a glove detector.
+  yolo_model: ''
   yolo_confidence: 0.35
   yolo_class_id: null
   yolo_device: auto

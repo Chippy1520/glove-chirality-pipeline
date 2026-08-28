@@ -10,8 +10,36 @@ from glove_chirality.models import build_model
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
+def decision_index(
+    classes: list[str],
+    probabilities: list[float],
+    decision_class: str = "argmax",
+    decision_threshold: float = 0.5,
+) -> int:
+    if len(classes) != len(probabilities) or not classes:
+        raise ValueError("classes and probabilities must be non-empty and have equal length")
+    if not 0.0 <= decision_threshold <= 1.0:
+        raise ValueError("decision_threshold must be in [0.0, 1.0]")
+    if decision_class == "argmax":
+        return max(range(len(probabilities)), key=probabilities.__getitem__)
+    if decision_class not in classes:
+        raise ValueError(f"decision_class must be argmax or one of: {', '.join(classes)}")
+    target_index = classes.index(decision_class)
+    if probabilities[target_index] >= decision_threshold:
+        return target_index
+    alternatives = [index for index in range(len(classes)) if index != target_index]
+    return max(alternatives, key=probabilities.__getitem__)
+
+
 class TorchClassifier:
-    def __init__(self, checkpoint: str | Path, device: str = "auto", amp: bool = False):
+    def __init__(
+        self,
+        checkpoint: str | Path,
+        device: str = "auto",
+        amp: bool = False,
+        decision_class: str = "argmax",
+        decision_threshold: float = 0.5,
+    ):
         try:
             import torch
             from torchvision import transforms
@@ -26,6 +54,14 @@ class TorchClassifier:
         self.use_amp = amp and self.device.type == "cuda"
         saved = torch.load(checkpoint, map_location=self.device, weights_only=False)
         self.classes = saved["classes"]
+        decision_index(
+            self.classes,
+            [1.0 / len(self.classes)] * len(self.classes),
+            decision_class,
+            decision_threshold,
+        )
+        self.decision_class = decision_class
+        self.decision_threshold = decision_threshold
         self.model = build_model(saved["model_name"], len(self.classes), pretrained=False).to(
             self.device
         )
@@ -50,7 +86,13 @@ class TorchClassifier:
             enabled=self.use_amp,
         ):
             probabilities = self.torch.softmax(self.model(tensor), dim=1)[0]
-        index = int(probabilities.argmax())
+        probability_values = probabilities.detach().cpu().tolist()
+        index = decision_index(
+            self.classes,
+            probability_values,
+            self.decision_class,
+            self.decision_threshold,
+        )
         return self.classes[index], float(probabilities[index])
 
     def predict(self, image_path: str | Path) -> tuple[str, float]:
@@ -83,6 +125,8 @@ def infer_images(
     checkpoint: str | Path,
     output_csv: str | Path,
     device: str = "auto",
+    decision_class: str = "argmax",
+    decision_threshold: float = 0.5,
 ):
     source = Path(input_path)
     images = (
@@ -90,7 +134,12 @@ def infer_images(
         if source.is_file()
         else sorted(item for item in source.rglob("*") if item.suffix.lower() in IMAGE_EXTENSIONS)
     )
-    classifier = TorchClassifier(checkpoint, device=device)
+    classifier = TorchClassifier(
+        checkpoint,
+        device=device,
+        decision_class=decision_class,
+        decision_threshold=decision_threshold,
+    )
     rows = []
     for image in images:
         label, confidence = classifier.predict(image)

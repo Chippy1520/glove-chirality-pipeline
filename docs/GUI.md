@@ -39,17 +39,42 @@ Edit the most frequently calibrated parameters:
 - temporal motion assistance;
 - adaptive empty-belt background learning and empty/foreground learning rates;
 - morphology and component-area limits;
-- YOLO model path, confidence, device, half precision, image size, IoU, and maximum detections;
-- optional masks, strict mask requirement, and ROI-only YOLO inference;
+- YOLO custom model picker, confidence, glove class ID, device, half precision, image size, IoU, and maximum detections;
+- one-click custom segmentation preset that selects the YOLO backend, requires masks, and enables ROI-only inference;
 - event confirmation, exit, and cooldown frames;
 - rejection of frames containing multiple simultaneous candidates;
 - crop padding, `bbox`/`masked`/`masked_fill` mode, square policy, and fixed output size.
 
 Load an existing YAML, save changes in place, or save a new copy. Advanced YAML values that are not shown remain intact when editing an existing configuration.
 
+#### Use a collaborator's custom YOLO11n-seg model
+
+The detector checkpoint and chirality-classifier checkpoint are separate:
+
+- **Layer 1:** the custom YOLO segmentation model detects a glove, supplies its mask, and drives passage tracking/cropping.
+- **Layer 2:** the classifier predicts left/right once for each accepted Layer-1 crop.
+
+To configure Layer 1 without hand-editing YAML:
+
+1. Open **Extraction settings**.
+2. Under **Layer 1 — custom YOLO segmentation**, click **Browse…** and choose the exported checkpoint, normally `best.pt`.
+3. The GUI automatically selects the `yolo` backend, sets glove class ID `0`, enables masks, requires segmentation output, and enables ROI-only inference.
+4. If the annotation platform assigned glove a different class index, change **Glove class ID** to match its dataset class list.
+5. Choose the YOLO device (`auto`, `cpu`, `cuda`, or `cuda:0`) and save the configuration, preferably with **Save as…**.
+6. Use **Calibration preview** on representative video timestamps before extracting a dataset or starting live inference.
+
+The default config intentionally contains no generic YOLO checkpoint. Stock COCO `yolo11n.pt` is not a glove detector. A box-only model also fails when strict masks are enabled, instead of silently changing crop behavior.
+
 ### Train
 
-Choose the manifest, checkpoint path, model, epochs, batch/image size, learning rate, grouped validation fraction, seed, device, AMP, and DataLoader workers.
+Choose the manifest, checkpoint path, model, epochs, batch/image size, learning rate, grouped validation fraction, seed, device, AMP, and DataLoader workers. The Layer-2 controls also expose:
+
+- `cross_entropy`, `weighted_cross_entropy`, or experimental `recall_hybrid` loss;
+- the recall target (`right` for the current safety objective);
+- recall-penalty weight; and
+- the validation metric used to retain the best checkpoint (`recall_right` when missed right gloves are the costly error).
+
+For the right-glove-recall experiment, start with `recall_hybrid`, target `right`, penalty weight `1.0`, and selection metric `recall_right`. Compare it against the weighted-cross-entropy baseline on the identical locked source/session split rather than assuming the custom loss is better.
 
 For an NVIDIA GPU, first install the CUDA-enabled PyTorch build matching the laptop, then use `cuda` or `cuda:N` and optionally enable AMP.
 
@@ -60,6 +85,9 @@ For an NVIDIA GPU, first install the CUDA-enabled PyTorch build matching the lap
 - Save machine-readable live events to JSONL and watch periodic FPS/latency/drop summaries in the run log.
 - Classify one existing crop or a directory of crops.
 - Select checkpoint, classifier device/AMP, output, and extraction config.
+- Keep **Recall-priority class** at `argmax` for ordinary classification. To reduce right-as-left errors, select `right` and lower its probability threshold below `0.5`; this intentionally increases left-as-right false alarms.
+
+The threshold must be selected on held-out source sessions. Do not claim zero missed right gloves from training metrics alone, and remember that this Layer-2 threshold cannot compensate for Layer-1 extraction misses.
 
 Live mode still delegates to `glove-pipeline infer-live`; the GUI contains no camera tracker or crop implementation of its own.
 

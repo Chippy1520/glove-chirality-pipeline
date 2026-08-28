@@ -76,7 +76,7 @@ def test_yolo_retains_polygon_and_maps_roi_coordinates_to_full_frame():
         masks=SimpleNamespace(xy=[polygon]),
     )
     config = DetectorConfig(
-        backend="yolo",
+        backend="yolo", yolo_model="custom.pt",
         roi=(0.25, 0.20, 0.75, 0.80),
         yolo_crop_to_roi=True,
         yolo_class_id=0,
@@ -109,7 +109,7 @@ def test_yolo_retains_polygon_and_maps_roi_coordinates_to_full_frame():
 def test_yolo_require_masks_rejects_box_only_detection():
     result = SimpleNamespace(boxes=[_Box([10, 10, 30, 30])], masks=None)
     detector = _detector(
-        DetectorConfig(backend="yolo", yolo_require_masks=True),
+        DetectorConfig(backend="yolo", yolo_model="custom.pt", yolo_require_masks=True),
         result,
     )
     with pytest.raises(RuntimeError, match="box-only"):
@@ -119,7 +119,7 @@ def test_yolo_require_masks_rejects_box_only_detection():
 def test_yolo_require_masks_allows_empty_segmentation_result():
     result = SimpleNamespace(boxes=[], masks=None)
     detector = _detector(
-        DetectorConfig(backend="yolo", yolo_require_masks=True),
+        DetectorConfig(backend="yolo", yolo_model="custom.pt", yolo_require_masks=True),
         result,
     )
     assert detector.detect(np.zeros((60, 80, 3), dtype=np.uint8)) == []
@@ -127,7 +127,7 @@ def test_yolo_require_masks_allows_empty_segmentation_result():
 
 def test_box_only_yolo_fallback_has_no_polygon():
     result = SimpleNamespace(boxes=[_Box([10, 10, 30, 30])], masks=None)
-    detector = _detector(DetectorConfig(backend="yolo"), result)
+    detector = _detector(DetectorConfig(backend="yolo", yolo_model="custom.pt"), result)
     detection = detector.detect(np.zeros((60, 80, 3), dtype=np.uint8))[0]
     assert detection.polygon is None
     assert (detection.x1, detection.y1, detection.x2, detection.y2) == (10, 10, 30, 30)
@@ -135,7 +135,7 @@ def test_box_only_yolo_fallback_has_no_polygon():
 
 def test_box_fallback_uses_floor_ceil_instead_of_shrinking_bounds():
     result = SimpleNamespace(boxes=[_Box([10.8, 11.2, 30.1, 31.9])], masks=None)
-    detector = _detector(DetectorConfig(backend="yolo"), result)
+    detector = _detector(DetectorConfig(backend="yolo", yolo_model="custom.pt"), result)
     detection = detector.detect(np.zeros((60, 80, 3), dtype=np.uint8))[0]
     assert (detection.x1, detection.y1, detection.x2, detection.y2) == (10, 11, 31, 32)
 
@@ -147,7 +147,7 @@ def test_strict_masks_reject_nonfinite_polygon():
         masks=SimpleNamespace(xy=[polygon]),
     )
     detector = _detector(
-        DetectorConfig(backend="yolo", yolo_require_masks=True),
+        DetectorConfig(backend="yolo", yolo_model="custom.pt", yolo_require_masks=True),
         result,
     )
     with pytest.raises(RuntimeError, match="invalid or degenerate"):

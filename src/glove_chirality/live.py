@@ -169,6 +169,8 @@ def run_live_inference(
     device: str = "auto",
     amp: bool = False,
     output: str | Path | None = None,
+    decision_class: str = "argmax",
+    decision_threshold: float = 0.5,
     event_callback: Callable[[dict[str, object]], None] | None = None,
     max_processed_frames: int | None = None,
     detector=None,
@@ -177,7 +179,13 @@ def run_live_inference(
 ) -> LiveMetrics:
     """Run event-driven inference with one classifier call per accepted passage."""
     detector = detector or build_detector(config.detector)
-    classifier = classifier or TorchClassifier(checkpoint, device=device, amp=amp)
+    classifier = classifier or TorchClassifier(
+        checkpoint,
+        device=device,
+        amp=amp,
+        decision_class=decision_class,
+        decision_threshold=decision_threshold,
+    )
     capture = capture or LatestFrameCapture(
         parse_capture_source(source),
         config.runtime.capture_queue_size,

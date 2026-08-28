@@ -24,3 +24,19 @@ def test_inference_device_option_parse():
         "--device", "cuda",
     ])
     assert args.device == "cuda"
+
+
+def test_live_inference_options_parse():
+    args = build_parser().parse_args([
+        "infer-live",
+        "--source", "0",
+        "--checkpoint", "model.pt",
+        "--config", "configs/production.yaml",
+        "--device", "cuda",
+        "--amp",
+        "--output", "events.jsonl",
+    ])
+    assert args.source == "0"
+    assert args.device == "cuda"
+    assert args.amp is True
+    assert args.output == "events.jsonl"

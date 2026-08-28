@@ -32,6 +32,15 @@ def test_preview_command_includes_detector_warmup():
     assert command[command.index("--warmup-seconds") + 1] == "3.0"
 
 
+def test_live_command_includes_source_output_and_amp():
+    command = gui_commands.infer_live(
+        "0", "model.pt", "events.jsonl", "production.yaml", "cuda", True
+    )
+    assert command[command.index("--source") + 1] == "0"
+    assert command[command.index("--output") + 1] == "events.jsonl"
+    assert command[-1] == "--amp"
+
+
 def test_required_gui_fields_fail_early():
     with pytest.raises(ValueError, match="Required"):
         gui_commands.infer_video("", "model.pt", "output", "config.yaml", "auto")

@@ -102,5 +102,9 @@ def test_classical_detector_emits_only_after_full_trigger_entry():
     cv2.rectangle(partial, (40, 70), (160, 170), (30, 30, 220), -1)
     complete = np.full_like(partial, (65, 175, 65))
     cv2.rectangle(complete, (80, 70), (200, 170), (30, 30, 220), -1)
-    assert detector.detect(partial) == []
-    assert len(detector.detect(complete)) == 1
+    partial_detections = detector.detect(partial)
+    assert len(partial_detections) == 1
+    assert inside_trigger(partial_detections[0], config, 320, 240) is False
+    complete_detections = detector.detect(complete)
+    assert len(complete_detections) == 1
+    assert inside_trigger(complete_detections[0], config, 320, 240) is True

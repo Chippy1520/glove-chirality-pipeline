@@ -7,31 +7,77 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 from glove_chirality.config import ExtractionConfig
 from glove_chirality.detection import build_detector
-from glove_chirality.types import Detection, ExtractedEvent
+from glove_chirality.detection.base import GloveDetector
+from glove_chirality.events import (
+    PassageOutcome,
+    PassageProcessor,
+    _crop_bounds,
+    _letterbox,
+    create_event_crop,
+)
+from glove_chirality.types import Detection, EventRecord, ExtractedEvent
 
 VIDEO_EXTENSIONS = {".mkv", ".avi", ".mp4", ".mov", ".m4v"}
 MANIFEST_FIELDS = [
-    "event_id", "image_path", "label", "label_provenance", "source_video",
-    "frame_index", "timestamp_s", "x1", "y1", "x2", "y2", "detector",
-    "quality_score", "config_hash",
+    "event_id",
+    "image_path",
+    "label",
+    "label_provenance",
+    "source_video",
+    "frame_index",
+    "timestamp_s",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "detector",
+    "detector_confidence",
+    "used_segmentation",
+    "mask_area_px",
+    "mask_bbox_fill_ratio",
+    "candidate_count",
+    "status",
+    "reject_reason",
+    "mask_path",
+    "quality_score",
+    "config_hash",
+]
+EVENT_REPORT_FIELDS = [
+    "event_id",
+    "source_video",
+    "frame_index",
+    "timestamp_s",
+    "status",
+    "reject_reason",
+    "candidate_count",
+    "detector",
+    "detector_confidence",
+    "used_segmentation",
+    "mask_area_px",
+    "mask_bbox_fill_ratio",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
 ]
 
 
-@dataclass
-class _Candidate:
-    frame: np.ndarray
-    detection: Detection
-    frame_index: int
-    timestamp_s: float
-    quality: float
+@dataclass(frozen=True)
+class ExtractionRun:
+    events: list[ExtractedEvent]
+    records: list[EventRecord]
 
 
 def config_hash(config: ExtractionConfig) -> str:
-    raw = json.dumps(asdict(config), sort_keys=True, separators=(",", ":"))
+    payload = {
+        "detector": asdict(config.detector),
+        "event": asdict(config.event),
+        "detect_every_n_frames": config.runtime.detect_every_n_frames,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
@@ -43,62 +89,124 @@ def discover_videos(path: str | Path) -> list[Path]:
         return [source]
     if not source.is_dir():
         raise FileNotFoundError(source)
-    return sorted(p for p in source.rglob("*") if p.suffix.lower() in VIDEO_EXTENSIONS)
+    return sorted(item for item in source.rglob("*") if item.suffix.lower() in VIDEO_EXTENSIONS)
 
 
-def _sharpness(frame: np.ndarray, box: Detection) -> float:
-    crop = frame[box.y1:box.y2, box.x1:box.x2]
-    if crop.size == 0:
-        return 0.0
-    return float(cv2.Laplacian(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
-
-
-def _quality(frame: np.ndarray, detection: Detection, config: ExtractionConfig) -> float:
-    h, w = frame.shape[:2]
-    tx1, ty1, tx2, ty2 = config.detector.trigger_zone
-    target_x, target_y = (tx1 + tx2) * w / 2, (ty1 + ty2) * h / 2
-    cx, cy = detection.center
-    distance = np.hypot(cx - target_x, cy - target_y)
-    diagonal = max(1.0, np.hypot((tx2 - tx1) * w, (ty2 - ty1) * h) / 2)
-    centrality = max(0.0, 1.0 - distance / diagonal)
-    sharpness = min(1.0, _sharpness(frame, detection) / 500.0)
-    return float(0.50 * centrality + 0.35 * detection.confidence + 0.15 * sharpness)
-
-
-def _crop(frame: np.ndarray, box: Detection, padding: float, square: bool) -> np.ndarray:
-    h, w = frame.shape[:2]
-    cx, cy = box.center
-    expanded_w = box.width * (1 + 2 * padding)
-    expanded_h = box.height * (1 + 2 * padding)
-    if square:
-        side = max(1, min(w, h, int(np.ceil(max(expanded_w, expanded_h)))))
-        x1 = max(0, min(w - side, round(cx - side / 2)))
-        y1 = max(0, min(h - side, round(cy - side / 2)))
-        return frame[y1:y1 + side, x1:x1 + side]
-    x1 = max(0, int(np.floor(cx - expanded_w / 2)))
-    y1 = max(0, int(np.floor(cy - expanded_h / 2)))
-    x2 = min(w, int(np.ceil(cx + expanded_w / 2)))
-    y2 = min(h, int(np.ceil(cy + expanded_h / 2)))
+def _crop(frame, box: Detection, padding: float, square: bool):
+    """Backward-compatible bbox crop helper used by older callers/tests."""
+    x1, y1, x2, y2 = _crop_bounds(frame, box, padding, square)
     return frame[y1:y2, x1:x2]
 
 
-def _letterbox(image: np.ndarray, size: int) -> np.ndarray:
-    """Resize without aspect distortion and center on a fixed square canvas."""
-    height, width = image.shape[:2]
-    if height == 0 or width == 0:
-        return image
-    scale = min(size / width, size / height)
-    resized_width = max(1, round(width * scale))
-    resized_height = max(1, round(height * scale))
-    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-    resized = cv2.resize(image, (resized_width, resized_height), interpolation=interpolation)
-    fill = np.median(image.reshape(-1, image.shape[2]), axis=0).astype(image.dtype)
-    canvas = np.empty((size, size, image.shape[2]), dtype=image.dtype)
-    canvas[:] = fill
-    x1 = (size - resized_width) // 2
-    y1 = (size - resized_height) // 2
-    canvas[y1:y1 + resized_height, x1:x1 + resized_width] = resized
-    return canvas
+def _mask_path(
+    outcome: PassageOutcome,
+    output_dir: Path,
+    config: ExtractionConfig,
+) -> Path | None:
+    detection = outcome.detection
+    if not config.event.save_masks or detection is None or detection.polygon is None:
+        return None
+    path = output_dir / "masks" / f"{outcome.event_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"format": "polygon_xy_full_frame", "points": detection.polygon}
+    path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    return path
+
+
+def _store_outcome(
+    outcome: PassageOutcome,
+    output_dir: Path,
+    detector_name: str,
+    config: ExtractionConfig,
+) -> tuple[ExtractedEvent | None, EventRecord]:
+    detection = outcome.detection
+    record = EventRecord(
+        outcome.event_id,
+        outcome.source_video,
+        outcome.frame_index,
+        outcome.timestamp_s,
+        outcome.status,
+        outcome.reject_reason,
+        outcome.candidate_count,
+        detection,
+        detector_name,
+    )
+    if not outcome.accepted or detection is None or outcome.crop is None:
+        return None, record
+
+    image_dir = output_dir / "images" / outcome.label
+    image_dir.mkdir(parents=True, exist_ok=True)
+    image_path = image_dir / f"{outcome.event_id}.jpg"
+    if not cv2.imwrite(str(image_path), outcome.crop):
+        raise RuntimeError(f"Could not write crop: {image_path}")
+    if config.event.save_full_frames and outcome.full_frame is not None:
+        full_dir = output_dir / "full_frames"
+        full_dir.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(full_dir / f"{outcome.event_id}.jpg"), outcome.full_frame)
+    mask_path = _mask_path(outcome, output_dir, config)
+    event = ExtractedEvent(
+        outcome.event_id,
+        image_path,
+        outcome.source_video,
+        outcome.label,
+        outcome.frame_index,
+        outcome.timestamp_s,
+        detection,
+        outcome.quality_score,
+        detector_name,
+        outcome.candidate_count,
+        mask_path,
+    )
+    return event, record
+
+
+def extract_video_with_report(
+    video_path: str | Path,
+    output_dir: str | Path,
+    label: str = "unknown",
+    config: ExtractionConfig | None = None,
+    detector: GloveDetector | None = None,
+) -> ExtractionRun:
+    """Sequential offline adapter around the shared passage processor."""
+    config = config or ExtractionConfig()
+    config.detector.validate()
+    config.event.validate()
+    if label not in {"left", "right", "unknown"}:
+        raise ValueError("label must be left, right, or unknown")
+    video_path, output_dir = Path(video_path), Path(output_dir)
+    detector = detector or build_detector(config.detector)
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise RuntimeError(f"Could not open video: {video_path}")
+    fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+    processor = PassageProcessor(detector, config, video_path.name, label)
+    events: list[ExtractedEvent] = []
+    records: list[EventRecord] = []
+    frame_index = -1
+    timestamp_s = 0.0
+
+    def store(outcome: PassageOutcome) -> None:
+        event, record = _store_outcome(outcome, output_dir, detector.name, config)
+        records.append(record)
+        if event is not None:
+            events.append(event)
+
+    try:
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            frame_index += 1
+            timestamp_s = frame_index / fps
+            run_detection = frame_index % config.runtime.detect_every_n_frames == 0
+            result = processor.process(frame, frame_index, timestamp_s, run_detection)
+            for outcome in result.outcomes:
+                store(outcome)
+        for outcome in processor.close(timestamp_s):
+            store(outcome)
+    finally:
+        capture.release()
+    return ExtractionRun(events, records)
 
 
 def extract_video(
@@ -107,124 +215,120 @@ def extract_video(
     label: str = "unknown",
     config: ExtractionConfig | None = None,
 ) -> list[ExtractedEvent]:
-    """Sequentially decode a video and emit one best crop per accepted passage."""
-    config = config or ExtractionConfig()
-    config.event.validate()
-    if label not in {"left", "right", "unknown"}:
-        raise ValueError("label must be left, right, or unknown")
-    video_path, output_dir = Path(video_path), Path(output_dir)
-    detector = build_detector(config.detector)
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise RuntimeError(f"Could not open video: {video_path}")
-    fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
-    image_dir = output_dir / "images" / label
-    image_dir.mkdir(parents=True, exist_ok=True)
-    full_dir = output_dir / "full_frames"
-    if config.event.save_full_frames:
-        full_dir.mkdir(parents=True, exist_ok=True)
-
-    events: list[ExtractedEvent] = []
-    active = False
-    seen = 0
-    missing = 0
-    cooldown = 0
-    best: _Candidate | None = None
-    last_detection: Detection | None = None
-    frame_index = -1
-    h = w = 1
-
-    def finalize() -> None:
-        nonlocal active, seen, missing, cooldown, best, last_detection
-        if active and best is not None and _sharpness(best.frame, best.detection) >= config.event.min_sharpness:
-            sequence = len(events) + 1
-            event_id = f"{label}__{video_path.stem}__e{sequence:06d}"
-            image_path = image_dir / f"{event_id}.jpg"
-            crop = _crop(best.frame, best.detection, config.event.crop_padding, config.event.make_square)
-            crop = _letterbox(crop, config.event.output_size)
-            if crop.size and cv2.imwrite(str(image_path), crop):
-                if config.event.save_full_frames:
-                    cv2.imwrite(str(full_dir / f"{event_id}.jpg"), best.frame)
-                events.append(ExtractedEvent(
-                    event_id, image_path, video_path.name, label, best.frame_index,
-                    best.timestamp_s, best.detection, best.quality, detector.name,
-                ))
-        active, seen, missing, best, last_detection = False, 0, 0, None, None
-        cooldown = config.event.cooldown_frames
-
-    try:
-        while True:
-            ok, frame = capture.read()
-            if not ok:
-                break
-            frame_index += 1
-            h, w = frame.shape[:2]
-            cooldown = max(0, cooldown - 1)
-            detections = detector.detect(frame)
-            ambiguous = config.event.reject_multiple_detections and len(detections) > 1
-            if ambiguous:
-                active, seen, missing, best, last_detection = False, 0, 0, None, None
-                cooldown = config.event.cooldown_frames
-                continue
-            chosen: Detection | None = None
-            if detections:
-                if last_detection is None:
-                    chosen = detections[0]
-                else:
-                    lx, ly = last_detection.center
-                    ranked = sorted(detections, key=lambda d: np.hypot(d.center[0] - lx, d.center[1] - ly))
-                    distance = np.hypot(ranked[0].center[0] - lx, ranked[0].center[1] - ly)
-                    if distance <= config.event.max_track_distance_ratio * np.hypot(w, h):
-                        chosen = ranked[0]
-            if chosen is not None and (active or cooldown == 0):
-                seen += 1
-                missing = 0
-                last_detection = chosen
-                if seen >= config.event.min_detected_frames:
-                    active = True
-                score = _quality(frame, chosen, config)
-                candidate = _Candidate(frame.copy(), chosen, frame_index, frame_index / fps, score)
-                if best is None or candidate.quality > best.quality:
-                    best = candidate
-            elif active:
-                missing += 1
-                if missing >= config.event.exit_missing_frames:
-                    finalize()
-            elif seen:
-                seen, best, last_detection = 0, None, None
-        if active:
-            finalize()
-    finally:
-        capture.release()
-    return events
+    """Backward-compatible accepted-event API."""
+    return extract_video_with_report(video_path, output_dir, label, config).events
 
 
-def event_rows(events: list[ExtractedEvent], root: str | Path, cfg_hash: str) -> list[dict[str, object]]:
+def event_rows(
+    events: list[ExtractedEvent],
+    root: str | Path,
+    cfg_hash: str,
+) -> list[dict[str, object]]:
     root = Path(root)
     rows = []
     for event in events:
-        d = event.detection
-        rows.append({
-            "event_id": event.event_id,
-            "image_path": event.image_path.relative_to(root).as_posix(),
-            "label": event.label,
-            "label_provenance": "known_stream" if event.label != "unknown" else "unlabeled",
-            "source_video": event.source_video,
-            "frame_index": event.frame_index,
-            "timestamp_s": f"{event.timestamp_s:.6f}",
-            "x1": d.x1, "y1": d.y1, "x2": d.x2, "y2": d.y2,
-            "detector": event.detector,
-            "quality_score": f"{event.quality_score:.6f}",
-            "config_hash": cfg_hash,
-        })
+        detection = event.detection
+        rows.append(
+            {
+                "event_id": event.event_id,
+                "image_path": event.image_path.relative_to(root).as_posix(),
+                "label": event.label,
+                "label_provenance": (
+                    "known_stream" if event.label != "unknown" else "unlabeled"
+                ),
+                "source_video": event.source_video,
+                "frame_index": event.frame_index,
+                "timestamp_s": f"{event.timestamp_s:.6f}",
+                "x1": detection.x1,
+                "y1": detection.y1,
+                "x2": detection.x2,
+                "y2": detection.y2,
+                "detector": event.detector,
+                "detector_confidence": f"{detection.confidence:.6f}",
+                "used_segmentation": detection.polygon is not None,
+                "mask_area_px": _optional_float(detection.mask_area),
+                "mask_bbox_fill_ratio": _optional_float(detection.mask_bbox_fill_ratio),
+                "candidate_count": event.candidate_count,
+                "status": "accepted",
+                "reject_reason": "",
+                "mask_path": (
+                    event.mask_path.relative_to(root).as_posix() if event.mask_path else ""
+                ),
+                "quality_score": f"{event.quality_score:.6f}",
+                "config_hash": cfg_hash,
+            }
+        )
     return rows
 
 
-def write_manifest(rows: list[dict[str, object]], path: str | Path) -> Path:
+def event_report_rows(records: list[EventRecord]) -> list[dict[str, object]]:
+    rows = []
+    for record in records:
+        detection = record.detection
+        rows.append(
+            {
+                "event_id": record.event_id,
+                "source_video": record.source_video,
+                "frame_index": record.frame_index,
+                "timestamp_s": f"{record.timestamp_s:.6f}",
+                "status": record.status,
+                "reject_reason": record.reject_reason,
+                "candidate_count": record.candidate_count,
+                "detector": record.detector,
+                "detector_confidence": (
+                    f"{detection.confidence:.6f}" if detection is not None else ""
+                ),
+                "used_segmentation": detection is not None and detection.polygon is not None,
+                "mask_area_px": _optional_float(detection.mask_area if detection else None),
+                "mask_bbox_fill_ratio": _optional_float(
+                    detection.mask_bbox_fill_ratio if detection else None
+                ),
+                "x1": detection.x1 if detection else "",
+                "y1": detection.y1 if detection else "",
+                "x2": detection.x2 if detection else "",
+                "y2": detection.y2 if detection else "",
+            }
+        )
+    return rows
+
+
+def _optional_float(value: float | None) -> str:
+    return "" if value is None else f"{value:.6f}"
+
+
+def _write_rows(
+    rows: list[dict[str, object]],
+    path: str | Path,
+    fields: list[str],
+) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=MANIFEST_FIELDS)
+        writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
     return path
+
+
+def write_manifest(rows: list[dict[str, object]], path: str | Path) -> Path:
+    return _write_rows(rows, path, MANIFEST_FIELDS)
+
+
+def write_event_report(rows: list[dict[str, object]], path: str | Path) -> Path:
+    return _write_rows(rows, path, EVENT_REPORT_FIELDS)
+
+
+__all__ = [
+    "ExtractionRun",
+    "_crop",
+    "_letterbox",
+    "config_hash",
+    "create_event_crop",
+    "discover_videos",
+    "event_report_rows",
+    "event_rows",
+    "extract_video",
+    "extract_video_with_report",
+    "write_event_report",
+    "write_manifest",
+]

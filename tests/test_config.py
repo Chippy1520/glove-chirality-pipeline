@@ -14,7 +14,11 @@ def test_default_config_loads():
     assert config.detector.adaptive_background is True
     assert config.event.reject_multiple_detections is True
     assert config.event.output_size == 256
+    assert config.event.crop_mode == "bbox"
+    assert config.event.timing_mode == "frames"
     assert config.event.make_square is True
+    assert config.detector.yolo_require_masks is False
+    assert config.runtime.detect_every_n_frames == 1
 
 
 def test_trigger_margin_must_leave_a_nonempty_inner_zone():
@@ -27,10 +31,39 @@ def test_output_size_must_be_positive():
         EventConfig(output_size=0)
 
 
+def test_segmentation_config_validation_is_explicit():
+    with pytest.raises(ValueError, match="requires yolo_use_masks"):
+        DetectorConfig(yolo_use_masks=False, yolo_require_masks=True)
+    with pytest.raises(ValueError, match="yolo_confidence"):
+        DetectorConfig(yolo_confidence=1.1)
+    with pytest.raises(ValueError, match="roi"):
+        DetectorConfig(roi=(0.8, 0.1, 0.2, 0.9))
+    with pytest.raises(ValueError, match="yolo_class_id"):
+        DetectorConfig(yolo_class_id=-1)
+    with pytest.raises(ValueError, match="crop_mode"):
+        EventConfig(crop_mode="unknown")
+    with pytest.raises(ValueError, match="frame thresholds"):
+        EventConfig(exit_missing_frames=0)
+
+
+def test_production_config_requires_single_class_segmentation():
+    path = Path(__file__).parents[1] / "configs" / "production.yaml"
+    config = ExtractionConfig.from_yaml(path)
+    assert config.detector.backend == "yolo"
+    assert config.detector.yolo_class_id == 0
+    assert config.detector.yolo_require_masks is True
+    assert config.detector.yolo_crop_to_roi is True
+    assert config.event.timing_mode == "time"
+
+
 def test_unknown_config_key_fails(tmp_path):
     path = tmp_path / "bad.yaml"
     path.write_text(yaml.safe_dump({"event": {"typo_setting": 1}}), encoding="utf-8")
     with pytest.raises(ValueError, match="typo_setting"):
+        ExtractionConfig.from_yaml(path)
+
+    path.write_text(yaml.safe_dump({"typo_section": {}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="typo_section"):
         ExtractionConfig.from_yaml(path)
 
 

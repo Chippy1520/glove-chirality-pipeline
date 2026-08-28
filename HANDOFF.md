@@ -27,10 +27,14 @@ Expected data inventory, not stored here:
 - Explicit no-glove state and adaptive belt-background learning during empty conveyor gaps.
 - Full-bounding-box trigger containment by default; partial glove entry/exit frames are ineligible.
 - Calibration detection runs before overlay rendering, and multi-candidate frames are rejected as ambiguous by default.
-- YOLO segmentation masks provide tight crop bounds when available; all accepted crops are exported at one configured, aspect-preserving size.
-- Calibration previews warm temporal detectors on preceding frames rather than evaluating an uninitialized, randomly sought frame.
-- Shared temporal extraction path for training and inference.
-- Crop manifest with source, frame/time, geometry, quality, detector, provenance, and config hash.
+- YOLO segmentation retains polygons, derives tight boxes, optionally runs on the configured ROI, and restores all geometry to full-frame coordinates.
+- Strict mask mode rejects accidental box-only checkpoints; classical and intentional box-only YOLO remain compatible.
+- Shared `PassageProcessor` and `create_event_crop()` path for dataset extraction, offline inference, and live inference.
+- `bbox`, `masked`, and `masked_fill` crops with one aspect-preserving output stage; `bbox` remains default.
+- Frame-count and monotonic-time event timing, deterministic center/bbox-IoU association, and opt-in segmentation quality terms.
+- Accepted manifest plus explicit accepted/rejected event report; optional polygon JSON persistence.
+- Segmentation preview overlays masks, tight boxes, confidence, candidate count, partial/edge diagnostics, and ambiguity.
+- Bounded-queue `infer-live` with stale-frame dropping, one classifier call per accepted passage, JSONL output, model warm-up, and rolling runtime metrics.
 - Model factory: TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16.
 - Source-video-grouped validation split and class-weighted training.
 - Accuracy, balanced accuracy, macro-F1, and confusion matrix output.
@@ -42,11 +46,11 @@ Expected data inventory, not stored here:
 
 No real video was available during implementation. Therefore:
 
-- the ROI and segmentation thresholds are placeholders;
-- passage recall, precision, duplicates, and crop quality are unknown on real data;
-- multi-object/merge/split handling remains a known limitation of the lightweight tracker;
-- no production chirality model or real-data accuracy claim exists;
-- no locked real-world train/validation/test split exists.
+- the ROI, trigger geometry, YOLO thresholds, and segmentation quality weights are uncalibrated placeholders;
+- passage recall, precision, duplicates, rejection correctness, crop quality, and real-time latency/FPS are unknown on target hardware;
+- multi-object tracking remains intentionally absent: simultaneous instances are rejected and audited;
+- low-confidence proposals removed inside YOLO cannot be assigned a downstream reject reason;
+- no production detector/classifier weights, real-data accuracy claim, or locked real-world split exists.
 
 ## Data placement
 
@@ -64,14 +68,15 @@ The repository ignores video, image, output, and model formats. Do not weaken th
 
 1. Confirm both labels mean the chirality of the glove itself, not image position.
 2. Record source/session/glove-lot metadata before extraction.
-3. Run `glove-pipeline preview` on early, middle, and late frames of every recording condition.
-4. Tune a copied YAML config; never silently alter the canonical baseline for one video.
+3. Train/validate a single-class YOLO11n-seg model (`class 0 = glove`) from source/session-grouped mask annotations, including partial, empty, glare, and multi-glove frames.
+4. Run mask-aware `glove-pipeline preview` on early, middle, and late frames; tune ROI, trigger, confidence, image size, and containment before extraction.
 5. Manually annotate passage counts and ambiguity on representative clips.
-6. Run extraction and measure passage precision/recall, duplicates, misses, clipped crops, and rejections per source.
-7. Freeze grouped splits before model comparison.
-8. Compare TinyCNN, ResNet-18, MobileNetV3-Small, and ViT with the same crops/splits/seeds.
-9. Report per-video and per-class metrics. Three right videos imply wide uncertainty.
-10. Evaluate end-to-end inference, counting missed and extra events as system failures.
+6. Run extraction and audit `manifest.csv` plus `event_report.csv` for precision/recall, duplicates, misses, partials, ambiguity, and crop completeness.
+7. Freeze grouped splits before classifier or crop-mode comparison.
+8. Compare `bbox`, `masked`, and `masked_fill` only on identical frozen splits; do not assume mask suppression is better.
+9. Compare classifiers with the same crops/splits/seeds and report per-video/per-class uncertainty.
+10. Evaluate end-to-end offline parity and live camera behavior, counting misses/extras/rejections as system outcomes.
+11. Measure capture/processed FPS, detector/event/classifier latency, accepted-event latency, and dropped frames on target hardware before making performance claims.
 
 Detailed gates are in `docs/REAL_VIDEO_PLAN.md` and `docs/VERIFICATION_CHECKLIST.md`.
 
@@ -101,9 +106,18 @@ glove-pipeline infer-video \
   --checkpoint checkpoints/resnet18_best.pt \
   --device cuda \
   --output outputs/new_run
+# GPU live event inference; JSONL is suitable for a later robot/PLC adapter
+# without embedding motion control in this repository.
+glove-pipeline infer-live \
+  --source 0 \
+  --checkpoint checkpoints/resnet18_best.pt \
+  --config configs/production.yaml \
+  --device cuda \
+  --amp \
+  --output outputs/live_events.jsonl
 ```
 
-For YOLO inference, set `yolo_device: 0` and `yolo_half: true` in the extraction YAML. Use custom glove weights; generic COCO weights do not define a glove class.
+For YOLO inference, configure `yolo_device`, `yolo_half`, ROI-only inference, and strict masks in `configs/production.yaml`. Use custom single-class glove segmentation weights; generic COCO weights do not define a glove class.
 
 ## Copy-paste prompt for another AI agent
 

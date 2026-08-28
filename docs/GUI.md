@@ -39,10 +39,11 @@ Edit the most frequently calibrated parameters:
 - temporal motion assistance;
 - adaptive empty-belt background learning and empty/foreground learning rates;
 - morphology and component-area limits;
+- YOLO model path, confidence, device, half precision, image size, IoU, and maximum detections;
+- optional masks, strict mask requirement, and ROI-only YOLO inference;
 - event confirmation, exit, and cooldown frames;
 - rejection of frames containing multiple simultaneous candidates;
-- crop padding and square-crop policy.
-- fixed export image size (256 pixels by default).
+- crop padding, `bbox`/`masked`/`masked_fill` mode, square policy, and fixed output size.
 
 Load an existing YAML, save changes in place, or save a new copy. Advanced YAML values that are not shown remain intact when editing an existing configuration.
 
@@ -55,8 +56,12 @@ For an NVIDIA GPU, first install the CUDA-enabled PyTorch build matching the lap
 ### Inference
 
 - Run the shared extractor and classifier on a full video.
+- Start/stop event-driven live inference from a camera index or OpenCV stream source.
+- Save machine-readable live events to JSONL and watch periodic FPS/latency/drop summaries in the run log.
 - Classify one existing crop or a directory of crops.
-- Select checkpoint, device, output, and extraction config.
+- Select checkpoint, classifier device/AMP, output, and extraction config.
+
+Live mode still delegates to `glove-pipeline infer-live`; the GUI contains no camera tracker or crop implementation of its own.
 
 ## Execution behavior
 

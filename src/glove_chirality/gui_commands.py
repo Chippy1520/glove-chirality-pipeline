@@ -80,3 +80,25 @@ def infer_images(input_path: str, checkpoint: str, output: str, device: str) -> 
         "infer-images", "--input", input_path, "--checkpoint", checkpoint,
         "--output", output, "--device", device,
     ]
+
+
+def infer_live(
+    source: str,
+    checkpoint: str,
+    output: str,
+    config: str,
+    device: str,
+    amp: bool = False,
+) -> list[str]:
+    _required(source=source, checkpoint=checkpoint, output=output, config=config)
+    command = _base() + [
+        "infer-live",
+        "--source", source,
+        "--checkpoint", checkpoint,
+        "--output", output,
+        "--config", config,
+        "--device", device,
+    ]
+    if amp:
+        command.append("--amp")
+    return command

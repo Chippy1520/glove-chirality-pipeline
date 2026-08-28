@@ -33,8 +33,15 @@ detector:
   yolo_class_id: null
   yolo_device: auto
   yolo_half: false
-  # A segmentation checkpoint uses mask-derived tight boxes automatically.
+  # A segmentation checkpoint retains polygons and uses mask-derived tight boxes.
   yolo_use_masks: true
+  # Fail instead of falling back when a box-only checkpoint is loaded.
+  yolo_require_masks: false
+  yolo_imgsz: 640
+  yolo_iou: 0.50
+  yolo_max_det: 5
+  # False preserves historical whole-frame YOLO behavior; production can enable ROI-only inference.
+  yolo_crop_to_roi: false
 
 event:
   min_detected_frames: 2
@@ -48,5 +55,30 @@ event:
   make_square: true
   # Every exported training/deployment crop has identical pixel dimensions.
   output_size: 256
+  # bbox preserves historical crops; masked modes require segmentation polygons.
+  crop_mode: bbox
+  save_masks: false
   min_sharpness: 0.0
   save_full_frames: false
+  # Frame timing preserves deterministic historical behavior. Live production may use time.
+  timing_mode: frames
+  min_detected_seconds: 0.08
+  exit_missing_seconds: 0.20
+  cooldown_seconds: 0.30
+  association_iou_weight: 0.25
+  association_mask_iou_weight: 0.0
+  # Conservative opt-in segmentation quality terms; calibrate on real videos.
+  quality_mask_area_weight: 0.0
+  quality_mask_stability_weight: 0.0
+  quality_boundary_clearance_weight: 0.0
+  quality_edge_penalty_weight: 0.0
+
+diagnostics:
+  show_masks: true
+  mask_alpha: 0.30
+
+runtime:
+  capture_queue_size: 2
+  detect_every_n_frames: 1
+  report_interval_seconds: 5.0
+  warmup: true

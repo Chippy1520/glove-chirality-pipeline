@@ -63,6 +63,30 @@ def test_extracts_exactly_one_event_and_manifest(tmp_path, glove_color):
     assert manifest.exists()
     assert rows[0]["label"] == "left"
     assert rows[0]["label_provenance"] == "known_stream"
+    assert rows[0]["status"] == "accepted"
+    assert rows[0]["candidate_count"] == 1
+    assert rows[0]["detector_confidence"]
+    assert rows[0]["used_segmentation"] is False
+
+
+def test_config_hash_excludes_nonsemantic_live_and_diagnostic_settings():
+    baseline = ExtractionConfig()
+    changed = ExtractionConfig()
+    changed.diagnostics.show_masks = False
+    changed.runtime.capture_queue_size = 1
+    changed.runtime.report_interval_seconds = 20.0
+    changed.runtime.warmup = False
+    assert config_hash(changed) == config_hash(baseline)
+
+
+def test_config_hash_includes_detection_frequency_and_crop_mode():
+    baseline = ExtractionConfig()
+    skipped = ExtractionConfig()
+    skipped.runtime.detect_every_n_frames = 2
+    masked = ExtractionConfig()
+    masked.event.crop_mode = "masked"
+    assert config_hash(skipped) != config_hash(baseline)
+    assert config_hash(masked) != config_hash(baseline)
 
 
 def test_multiple_candidates_do_not_create_an_arbitrary_crop(tmp_path, monkeypatch):

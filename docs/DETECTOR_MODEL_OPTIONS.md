@@ -10,7 +10,7 @@ For production extraction, train a **single-class `glove` instance-segmentation 
 
 | Priority | Model | Output | Why test it | Important constraint |
 |---|---|---|---|---|
-| 1 | YOLO11n-seg | boxes + instance masks | Small, fast, and supported by the existing adapter, which derives tight crop bounds from returned masks | Ultralytics repository is AGPL-3.0; assess licensing before a closed industrial deployment |
+| 1 | YOLO11n-seg | boxes + retained instance polygons | Small, fast, and integrated with strict masks, ROI-only inference, full-frame coordinate restoration, mask-aware previews/crops, and shared offline/live passage processing | Ultralytics repository is AGPL-3.0; assess licensing before a closed industrial deployment |
 | 2 | RF-DETR Seg Nano | boxes + instance masks | Small real-time transformer baseline, designed for fine-tuning, Apache-2.0 model/package path | Adds a new backend and should be benchmarked on the target deployment GPU |
 | 3 | Torchvision Mask R-CNN R50-FPN v2 | boxes + instance masks | Mature, conservative research baseline with BSD-3-Clause torchvision | Usually slower/heavier than nano real-time models |
 | Annotation aid | SAM 2.1 Small | prompted/video masks | Propagate masks through short clips to reduce manual polygon work | Use for annotation assistance, not as an unprompted passage detector |
@@ -24,6 +24,18 @@ Sources:
 - [RF-DETR repository](https://github.com/roboflow/rf-detr)
 - [Torchvision Mask R-CNN](https://docs.pytorch.org/vision/main/models/mask_rcnn.html)
 - [SAM 2 repository](https://github.com/facebookresearch/sam2)
+
+## Implemented YOLO11n-seg contract
+
+The production adapter expects one detector class: `0 = glove`. Left/right is never a detector class or detector input. `Detection` retains a compact full-frame polygon rather than a 1920×1080 binary mask. The polygon drives a tight box, full-containment gate, diagnostics, optional crop background suppression, quality metadata, and optional separate JSON persistence.
+
+Use `yolo_require_masks: true` for production so a box-only checkpoint fails clearly. `yolo_crop_to_roi: true` sends only the configured inspection ROI to YOLO, then offsets boxes and polygons back into full-frame coordinates. `roi` and `trigger_zone` remain normalized full-frame settings.
+
+`crop_mode: bbox` remains the safe default. `masked` zeros non-glove pixels and `masked_fill` uses a deterministic median outside-mask background. These are experimental factors, not automatic improvements: compare them against bbox crops on exactly the same source/session split and keep detector/extractor settings frozen.
+
+The shared passage processor detects partial masks but accepts only complete trigger-contained frames, rejects multiple simultaneous instances, selects one best frame, and invokes the chirality classifier once. Live capture uses monotonic time and a bounded latest-frame queue; it is not YOLO-plus-classification on every frame.
+
+See `configs/production.yaml` for the complete strict-segmentation example.
 
 ## Public glove datasets inspected
 
@@ -67,7 +79,9 @@ Report model metrics and passage metrics separately:
 - duplicate crops per physical passage;
 - missed passages;
 - ambiguous/touching passage rate;
-- extraction latency on the deployment device;
-- end-to-end chirality accuracy with extraction failures included.
+- extraction latency and rolling live detector/event/classifier latency on the deployment device;
+- captured/processed/dropped frame counts and accepted-event latency under load;
+- end-to-end chirality accuracy with extraction failures and explicit rejections included;
+- bbox versus masked/masked-fill classifier results on identical source/session splits.
 
 The recommended first comparison is classical foreground vs YOLO11n-seg vs RF-DETR Seg Nano on the same source-level split. Use Mask R-CNN as a slower reference if compute permits. Export every accepted crop through the shared fixed-size letterbox stage so crop dimensions cannot become a classifier shortcut.

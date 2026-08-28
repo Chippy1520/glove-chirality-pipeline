@@ -19,19 +19,22 @@ It provides file/directory pickers, common extraction-setting editing with YAML 
 ## Pipeline
 
 ```text
-MKV/video or camera recording
+camera / video
         |
-interchangeable detector (classical CPU or custom YOLO)
+configured full-frame ROI -> single-class YOLO11n-seg (class 0 = glove)
         |
-passage state machine + best-frame selector
+mask + confidence -> full-containment gate -> temporal passage processor
         |
-one square crop per accepted glove event
+best complete/sharp frame -> canonical bbox/masked crop -> fixed-size letterbox
         |-----------------------------|
         |                             |
-images + manifest.csv          classifier checkpoint
-(training / any external use)         |
-                                      left/right + confidence
+images + manifest/report       classifier checkpoint
+(training / offline audit)            |
+                               one left/right decision per accepted passage
 ```
+
+Offline extraction, offline video inference, and live inference all use the same
+`PassageProcessor` and `create_event_crop()` path. The classifier is not run per frame.
 
 ## What is implemented
 
@@ -39,18 +42,21 @@ images + manifest.csv          classifier checkpoint
 - Configurable inspection ROI and central trigger zone.
 - CPU `belt_foreground` detector combining Lab belt-color distance with optional temporal motion, independent of a specific glove color.
 - Legacy `dark_contour` fallback for controlled dark-glove recordings.
-- Optional Ultralytics YOLO adapter with the same detector interface.
-- Segmentation-aware YOLO extraction: when a trained checkpoint returns masks, their tight bounds drive containment and cropping.
-- Full-containment trigger gating: a glove is eligible only when its entire detected box is inside the trigger zone; partial entry/exit frames are rejected consistently by classical and YOLO backends.
-- Temporal event state machine with confirmation, tracking distance, exit timeout, cooldown, best-frame quality scoring, padded square crops, and exactly one emission per accepted event.
+- Optional Ultralytics YOLO adapter with full-frame or ROI-only inference and full-frame coordinate restoration.
+- YOLO segmentation polygons are retained in the backend-neutral `Detection`; strict mask mode rejects box-only checkpoints instead of silently falling back.
+- Full-containment trigger gating is applied by the shared passage processor, so partial gloves remain visible to diagnostics/auditing but cannot become accepted crops.
+- Frame- or monotonic-time-based temporal state machine with confirmation, deterministic center/bbox-IoU association, exit timeout, and continuous-empty cooldown; detections during rearming reset cooldown to suppress duplicate passages.
+- Canonical `bbox`, `masked`, and `masked_fill` crops share the same padding, square, and aspect-preserving output-size stage; `bbox` remains the compatibility default.
 - Explicit no-glove behavior: empty conveyor frames and long gaps emit no crop or prediction, while adaptive background learning refreshes the belt model between passages.
 - Ambiguity rejection: the single-object extractor does not arbitrarily choose among multiple simultaneous candidates.
 - Label provenance: left-only/right-only video streams attach known source labels; detection never uses the label.
-- Ordinary JPEG crops plus auditable CSV metadata.
-- Fixed-size, aspect-preserving crop export (`256x256` by default) shared by dataset and deployment extraction.
+- Ordinary JPEG crops plus accepted-event `manifest.csv` and accepted/rejected `event_report.csv` audit metadata.
+- Optional separate polygon JSON files via `event.save_masks`; ordinary CSV files never embed large polygons.
+- Fixed-size, aspect-preserving crop export (`256x256` by default) shared by dataset, offline inference, and live inference.
 - Grouped train/validation split by source video to prevent adjacent-event leakage.
 - Interchangeable `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, and `vit_b_16` classifiers.
 - Image inference and full video-to-event-to-prediction deployment commands.
+- `infer-live` with bounded latest-frame capture, stale-frame dropping, model warm-up, rolling performance metrics, and JSONL event output; classification runs once per accepted passage.
 - Synthetic-video integration test because real recordings are not in this repository.
 
 ## Installation
@@ -126,10 +132,12 @@ data/chirality_v1/
 ├── images/
 │   ├── left/*.jpg
 │   └── right/*.jpg
-└── manifest.csv
+├── masks/*.json          # only when event.save_masks=true
+├── manifest.csv          # accepted crops used by classifier training
+└── event_report.csv      # accepted and rejected passage outcomes
 ```
 
-The crops are independent ordinary images and may be copied into any other workflow. `manifest.csv` records event ID, known-stream label and provenance, source video, representative frame/time, original bounding box, detector, quality score, and extraction-config hash.
+The crops are independent ordinary images and may be copied into any other workflow. `manifest.csv` records accepted-event provenance, source frame/time, full-frame box, detector confidence, segmentation usage/area/fill ratio, candidate count, crop reference, quality, and config hash. `event_report.csv` separates accepted passages from `multiple_candidates`, `partial`, `track_lost`, `insufficient_confirmation`, `low_sharpness`, and end-of-stream rejections. Rejected outcomes never reach the classifier.
 
 Every crop is exported at `event.output_size` square pixels (256 by default). Resizing preserves aspect ratio and letterboxes when necessary, so crop dimensions cannot become a classifier shortcut. Changing this setting requires regenerating the dataset; do not mix old variable-sized crops with the new export.
 
@@ -193,25 +201,63 @@ glove-pipeline infer-video \
 
 This writes each event crop plus `predictions.csv` containing one left/right prediction and confidence per accepted passage.
 
+Live camera/stream inference uses the same passage processor and crop implementation:
+
+```bash
+glove-pipeline infer-live \
+  --source 0 \
+  --checkpoint checkpoints/resnet18_best.pt \
+  --config configs/production.yaml \
+  --device cuda \
+  --amp \
+  --output outputs/live_events.jsonl
+```
+
+The capture thread uses a bounded queue and discards stale frames instead of accumulating latency. `event.timing_mode: time` uses monotonic capture timestamps so confirmation, exit, and cooldown durations remain physical-time quantities when frames are dropped. `runtime.detect_every_n_frames` defaults to `1`; increasing it trades detector load for temporal evidence and must be validated. Periodic capture/processed FPS and rolling YOLO/event/classifier/accepted-event latency are written to stderr, while JSONL remains machine-readable. No robot-motion commands are embedded.
+
+## Production YOLO11n-seg configuration
+
+The detector is deliberately single-class (`class 0 = glove`); chirality remains downstream. A complete example is committed at [`configs/production.yaml`](configs/production.yaml):
+
+```yaml
+detector:
+  backend: yolo
+  roi: [0.15, 0.05, 0.90, 0.99]
+  trigger_zone: [0.18, 0.15, 0.90, 0.90]
+  require_full_containment: true
+  trigger_inner_margin_ratio: 0.0
+  yolo_model: checkpoints/yolo11n_seg_glove_best.pt
+  yolo_confidence: 0.25
+  yolo_class_id: 0
+  yolo_device: 0
+  yolo_half: true
+  yolo_use_masks: true
+  yolo_require_masks: true
+  yolo_crop_to_roi: true
+  yolo_imgsz: 640
+  yolo_iou: 0.50
+  yolo_max_det: 5
+
+event:
+  min_detected_frames: 2
+  reject_multiple_detections: true
+  exit_missing_frames: 5
+  cooldown_frames: 8
+  crop_padding: 0.12
+  make_square: true
+  output_size: 256
+  crop_mode: bbox
+```
+
+Keep `crop_mode: bbox` until a source-grouped experiment demonstrates that `masked` or `masked_fill` improves held-out performance. Compare modes with exactly the same source/session splits; crop mode is part of the extraction config hash.
+
 ## Swapping components
 
 - Implement `GloveDetector.detect(frame) -> list[Detection]` and register it in `detection/factory.py` to add a detector.
 - Add a classifier constructor to `models.build_model` to compare another CNN/ViT.
 - The extraction manifest and image interface remain unchanged.
 
-For YOLO, train a custom glove model and set:
-
-```yaml
-detector:
-  backend: yolo
-  yolo_model: checkpoints/glove_detector.pt
-  yolo_confidence: 0.35
-  yolo_class_id: 0
-  yolo_device: 0
-  yolo_half: true
-```
-
-A generic COCO nano model does not contain a glove class; `yolo11n.pt` is only a placeholder for interface testing and must be replaced by custom weights.
+For YOLO, use a custom single-class segmentation checkpoint and the production example above. Generic COCO weights do not define a glove class. `yolo_require_masks: true` validates the loaded task and fails clearly for box-only weights; set it false only when box fallback is intentionally part of an experiment.
 
 ## Testing
 
@@ -223,9 +269,11 @@ The integration test generates a deterministic MJPEG synthetic conveyor clip and
 
 ## Current limitations and next research steps
 
-- The default classical detector supports arbitrary glove colors that differ visually from the dominant belt and uses motion assistance for low color contrast. A glove indistinguishable from the belt still requires temporal evidence, a contrasting belt, or a learned detector; touching objects may require instance segmentation.
-- Current tracking is deliberately lightweight and optimized for one well-spaced passage through the trigger zone. For simultaneous gloves, add multi-object tracks with merge/split ambiguity rejection.
-- No accuracy claim is made without the real data. Keep extraction metrics separate from chirality classification metrics.
+- The default classical detector remains a bootstrap path; production targets a custom single-class YOLO11n-seg checkpoint. No detector weights or real-video accuracy evidence are stored here.
+- Tracking remains one active deterministic passage, not a multi-object tracker. Multiple simultaneous instances are rejected and audited rather than arbitrarily selected.
+- Low-confidence proposals suppressed inside YOLO NMS are not observable to the downstream audit report; evaluate detector misses separately against annotated footage.
+- Real-time FPS and latency depend on camera, decoder, GPU, model, ROI, and exposure. The instrumentation is implemented, but no hardware performance claim is made without measurement.
+- OpenCV camera/stream capture is supported. Use `infer-video` for deterministic file evaluation; a file supplied to `infer-live` may be decoded faster than wall time and stale frames can intentionally be dropped.
 - Because class labels come from different videos, audit models for video/session leakage and capture left and right gloves under matched conditions.
 
 ## License

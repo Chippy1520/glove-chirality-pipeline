@@ -17,6 +17,9 @@ class GloveDetector(ABC):
     def detect(self, frame: np.ndarray) -> list[Detection]:
         """Return candidates in full-frame pixel coordinates."""
 
+    def warmup(self, frame: np.ndarray) -> None:
+        """Optionally initialize model kernels without creating an event."""
+
 
 def inside_trigger(
     detection: Detection,

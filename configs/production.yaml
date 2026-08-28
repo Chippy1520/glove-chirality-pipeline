@@ -1,0 +1,59 @@
+# Unvalidated deployment template for a custom single-class YOLO11n-seg checkpoint.
+# Calibrate geometry, thresholds, and timing on representative real footage.
+detector:
+  backend: yolo
+  roi: [0.15, 0.05, 0.90, 0.99]
+  trigger_zone: [0.18, 0.15, 0.90, 0.90]
+  require_full_containment: true
+  trigger_inner_margin_ratio: 0.0
+
+  yolo_model: checkpoints/yolo11n_seg_glove_best.pt
+  yolo_confidence: 0.25
+  yolo_class_id: 0
+  yolo_device: 0
+  yolo_half: true
+  yolo_use_masks: true
+  yolo_require_masks: true
+  yolo_crop_to_roi: true
+  yolo_imgsz: 640
+  yolo_iou: 0.50
+  yolo_max_det: 5
+
+event:
+  min_detected_frames: 2
+  reject_multiple_detections: true
+  exit_missing_frames: 5
+  cooldown_frames: 8
+  max_track_distance_ratio: 0.20
+
+  crop_padding: 0.12
+  make_square: true
+  output_size: 256
+  crop_mode: bbox
+  save_masks: false
+
+  # Prefer time semantics for live capture because stale frames may be dropped.
+  timing_mode: time
+  min_detected_seconds: 0.08
+  exit_missing_seconds: 0.20
+  cooldown_seconds: 0.30
+
+  # Conservative, unvalidated segmentation quality terms. Tune only with real-video evidence.
+  association_iou_weight: 0.25
+  association_mask_iou_weight: 0.0
+  quality_mask_area_weight: 0.0
+  quality_mask_stability_weight: 0.0
+  quality_boundary_clearance_weight: 0.0
+  quality_edge_penalty_weight: 0.0
+  min_sharpness: 0.0
+  save_full_frames: false
+
+diagnostics:
+  show_masks: true
+  mask_alpha: 0.30
+
+runtime:
+  capture_queue_size: 2
+  detect_every_n_frames: 1
+  report_interval_seconds: 5.0
+  warmup: true

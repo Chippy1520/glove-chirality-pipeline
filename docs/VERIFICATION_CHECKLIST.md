@@ -12,7 +12,7 @@ Use this checklist before real videos are available to verify correctness, repro
 - [ ] State whether labels describe the glove itself, the wearer’s hand, or image-side location. Never infer chirality from left/right image position.
 - [ ] Define an event precisely: start rule, end rule, debounce/hysteresis, minimum/maximum duration, temporal padding, and behavior when a video starts or ends mid-event.
 - [ ] Define the fixed ROI in full-frame pixel coordinates and its coordinate convention: `[x0, y0, x1, y1)` is recommended.
-- [ ] Define how multiple visible gloves are handled: only the glove triggering/intersecting the ROI is selected; non-triggering gloves are distractors and must not change the event identity.
+- [ ] Define how multiple visible gloves are handled: simultaneous/touching trigger candidates are ambiguous and rejected unless a validated instance-aware tracker is introduced; non-triggering gloves must not change event identity.
 - [ ] Define crop policy: per-frame or representative frame, crop dimensions/aspect ratio, padding, boundary clipping, resizing, color order, interpolation, and normalization.
 - [ ] Define manifest schema, required fields, data types, null policy, path convention, and schema version.
 - [ ] Define stable identifiers: `source_video_id`, `recording_session_id`, `event_id`, `track_id` (if applicable), `frame_index`, and `extractor_version/config_hash`.
@@ -100,6 +100,9 @@ Use `pytest`; parameterize frame-boundary cases and seed random/property tests.
 
 ### 3.1 Geometry and ROI
 
+- [ ] YOLO ROI-only inference receives the intended pixel crop and restores every box/polygon vertex to full-frame coordinates before trigger gating or persistence.
+- [ ] Strict-mask mode accepts empty segmentation results but rejects box-only, missing, mismatched, non-finite, and degenerate polygons without silent fallback.
+- [ ] Classical and intentionally box-only backends continue to emit `polygon=None` and preserve bbox behavior.
 - [ ] Point/box/polygon intersection at all edges and corners follows one documented convention.
 - [ ] Overlap/IoU calculations are correct for disjoint, contained, equal, zero-area, and partially clipped boxes.
 - [ ] Crop padding and clipping never produce negative indices, empty crops, wraparound, or inconsistent shapes.
@@ -108,6 +111,9 @@ Use `pytest`; parameterize frame-boundary cases and seed random/property tests.
 
 ### 3.2 Temporal event state machine
 
+- [ ] Frame-count and monotonic-time timing modes exercise equivalent passage sequences, including skipped frame indices and irregular intervals.
+- [ ] Rearming requires continuous empty evidence; detections during cooldown reset it and cannot create a duplicate accepted/rejected outcome for the same occupied passage.
+- [ ] Timestamp regression fails clearly rather than corrupting time-based state.
 - [ ] Idle → candidate → active → closing → idle transitions are tested frame by frame.
 - [ ] Minimum dwell, hysteresis, debounce, merge gap, cooldown, and max-duration thresholds test `N-1`, `N`, and `N+1` frames.
 - [ ] EOF flush and start-of-file active state behave as specified.
@@ -116,6 +122,8 @@ Use `pytest`; parameterize frame-boundary cases and seed random/property tests.
 
 ### 3.3 Crop and preprocessing
 
+- [ ] `bbox`, `masked`, and `masked_fill` share identical crop bounds and letterboxing; mask modes alter only outside-polygon pixels.
+- [ ] Missing polygons fail clearly in mask-required crop modes, and deterministic median fill reproduces identical arrays.
 - [ ] BGR/RGB conversion, resizing interpolation, dtype, value range, channel layout, mean/std normalization, and batch dimension match the model contract.
 - [ ] Representative-frame or temporal-sampling selection yields exact expected indices, including short events and padding.
 - [ ] Training and inference preprocessing functions produce byte-identical or tolerance-equal tensors for the same crop/config.
@@ -152,6 +160,9 @@ Use `pytest`; parameterize frame-boundary cases and seed random/property tests.
 
 ### 4.2 Deployment path
 
+- [ ] Bounded live capture never exceeds its configured queue, reports stale-frame drops, and classifies exactly once per accepted passage rather than once per frame.
+- [ ] Live JSONL/event callbacks contain full-frame geometry, detector/config/model metadata, confidence, timing, and no prediction for rejected passages.
+- [ ] Runtime-only display/reporting/queue/warm-up settings do not alter the extraction config hash; detection frequency and crop semantics do.
 - [ ] Run the same synthetic video through deployment event extraction and a deterministic stub classifier.
 - [ ] Assert deployment event IDs, start/end frames, selected frames, crop boxes, and preprocessed tensors match the training-export path event by event.
 - [ ] Compare serialized extractor config hash and code/model versions in the inference record.

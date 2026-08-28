@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from glove_chirality.config import DetectorConfig
-from glove_chirality.detection.base import GloveDetector, inside_trigger
+from glove_chirality.detection.base import GloveDetector
 from glove_chirality.types import Detection
 
 
@@ -60,8 +60,6 @@ class _ContourDetector(GloveDetector):
                 ry1 + y + box_height,
                 0.0,
             )
-            if not inside_trigger(candidate, self.config, width, height):
-                continue
             area_score = min(1.0, candidate.area / trigger_area * 3.0)
             confidence = 0.55 * area_score + 0.45 * min(1.0, solidity)
             found.append(

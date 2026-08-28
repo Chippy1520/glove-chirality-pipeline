@@ -22,7 +22,9 @@ Generate previews at early, middle, and late timestamps:
 glove-pipeline preview --video VIDEO.mkv --seconds 30 --warmup-seconds 2 --config CONFIG.yaml --output preview.jpg
 ```
 
-Tune ROI and trigger-zone geometry first, then `color_distance_threshold` and motion-background settings across every glove color. Make the trigger zone large enough for the complete glove bounding box, and verify that partial entry/exit frames are rejected while each chosen representative box remains wholly inside it. Exclude light strips, enclosure borders, and areas where incomplete distractor gloves dominate. Include gloves close to the belt color explicitly; if RGB contrast is physically insufficient, test a custom detector or change the belt/background rather than introducing color-specific thresholds.
+Tune ROI and trigger-zone geometry first, then the custom single-class YOLO11n-seg settings (`class 0 = glove`): confidence, image size, IoU, max detections, strict masks, and ROI-only inference. Preview must show the mask overlay/contour, mask-derived box, confidence, candidate count, full-containment status, and ambiguity. Make the trigger zone large enough for the complete mask-derived box. Verify that partial entry/exit masks are detected but remain ineligible. Exclude light strips and enclosure borders through ROI geometry rather than teaching the detector to ignore physical partial gloves.
+
+Keep the classical detector only as a measured bootstrap baseline. Do not use generic COCO weights as a glove detector. For live deployment start from `configs/production.yaml`; preserve normalized full-frame ROI/trigger coordinates even though YOLO receives only the ROI crop.
 
 ## Phase 2 — passage ground truth
 
@@ -30,22 +32,26 @@ Annotate a stratified subset with:
 
 - physical passage ID;
 - entry, central-selection, and exit frames;
-- target glove identity;
-- left/right label;
-- complete, clipped, merged, occluded, ambiguous, or invalid status.
+- target glove identity and one instance mask per visible glove, including partial gloves;
+- detector class `0 = glove` only—never chirality;
+- left/right chirality label for downstream classification;
+- complete, clipped, merged, occluded, ambiguous, or invalid status;
+- source/session grouping metadata fixed before sampling.
 
 Include negative footage and difficult multi-glove cases. Double-annotate a subset and adjudicate disagreements without model predictions.
 
 ## Phase 3 — extraction acceptance
 
-Run extraction without classifier tuning. Match extracted events to annotations and report per video:
+Run extraction without classifier tuning. Audit both `manifest.csv` and `event_report.csv`, then match accepted and rejected outcomes to annotations. Report per video:
 
+- YOLO box/mask recall for fully visible and partial gloves plus false positives per empty hour;
 - accepted crops / physical passages;
 - passage precision, recall, and F1;
 - duplicate rate—target zero by construction;
 - false events and misses per hour;
 - clipped, blurred, merged, and ambiguous crop rates;
-- representative-frame quality;
+- correctness/counts for partial, multiple-candidate, track-lost, insufficient-confirmation, low-sharpness, and end-of-stream audit outcomes;
+- representative-frame quality and mask stability/clearance distributions;
 - determinism across identical reruns;
 - throughput on deployment hardware.
 
@@ -69,7 +75,7 @@ A large random-vs-grouped gap indicates session memorization. Report grouped res
 
 ## Phase 5 — classifier comparison
 
-Use identical crops, split manifests, seeds, and evaluation code for all models. Start with TinyCNN and ResNet-18 baselines, then MobileNet and ViT if justified. GPU resources should be used when they improve experiment scale or turnaround.
+Use identical source/session groups, sampled passages, seeds, and evaluation code for all comparisons. First compare `crop_mode: bbox`, `masked`, and `masked_fill` with a frozen detector/extractor; do not assume mask suppression helps. Keep `bbox` as the production default until held-out evidence supports a change. Then compare TinyCNN and ResNet-18 baselines, followed by MobileNet/ViT if justified. GPU resources should be used when they improve experiment scale or turnaround.
 
 Track:
 
@@ -85,9 +91,15 @@ Do not select a model from aggregate accuracy alone. With three right videos, un
 
 ## Phase 6 — end-to-end evaluation
 
-Evaluate the frozen extractor plus frozen classifier on the locked test set. Count missed, extra, and wrong-target events as system failures. Report both classifier-isolated performance on ground-truth crops and end-to-end correct decisions over required physical passages.
+Evaluate the frozen extractor plus frozen classifier on the locked test set. Count missed, extra, rejected-required, and wrong-target events as system failures. Report both classifier-isolated performance on ground-truth crops and end-to-end correct decisions over required physical passages.
 
-Verify offline/deployment parity for event IDs, source frames, crop coordinates, crop arrays, preprocessing tensors, config hash, and model metadata.
+Verify offline/deployment parity for event IDs, source frames, full-frame mask/box coordinates, crop arrays, preprocessing tensors, config hash, and model metadata. Then run the same frozen config with `infer-live` on the target camera. Use `timing_mode: time`, queue size 1–2, and detection frequency 1 initially. Report capture/processed FPS, detector/event/classifier latency, accepted-event latency, dropped frames, accepted/rejected passages, and decision timing. Do not tune away misses or ambiguity merely to improve FPS.
+
+```bash
+glove-pipeline infer-live --source 0 --checkpoint CHECKPOINT.pt \
+  --config configs/production.yaml --device cuda --amp \
+  --output outputs/live_events.jsonl
+```
 
 ## Phase 7 — release evidence
 

@@ -1,106 +1,182 @@
 # Architecture
 
-## System boundary
+## Production data flow
 
 ```text
-video / camera recording
+camera / video
         ↓
-FrameSource (sequential OpenCV decode)
-        ↓
-GloveDetector backend
-        ↓ list[Detection]
-Passage extractor state machine
-        ↓ one best ExtractedEvent per accepted passage
-        ├── Dataset sink: image + known-stream label + manifest
-        └── Inference sink: classifier adapter + prediction CSV
+source adapter (sequential offline decoder or bounded latest-frame capture)
+        ↓ full BGR frame + frame index + elapsed timestamp
+GloveDetector
+        ├── classical: box, polygon=None
+        └── YOLO11n-seg: class 0, confidence, tight mask box, polygon
+        ↓ list[Detection] in full-frame coordinates
+PassageProcessor
+        ↓ gate → associate → confirm → select best → finalize once
+create_event_crop()
+        ↓ bbox / masked / masked_fill → square/letterbox → fixed output size
+accepted passage
+        ├── dataset sink: crop + manifest.csv
+        ├── audit sink: event_report.csv
+        └── inference sink: one classifier call → CSV/JSONL
 ```
 
-`extract_video()` is the shared boundary. Training export and deployment inference both call it; there is no duplicate crop implementation.
+The non-negotiable boundary is `PassageProcessor` plus `create_event_crop()` in
+`events.py`. `extract_video_with_report()` and `run_live_inference()` are source/sink
+adapters around that same detector, gate, state machine, frame selector, and crop path.
+Live mode does not contain a simplified crop implementation and never classifies every
+frame.
 
 ## Package map
 
 | Path | Responsibility |
 |---|---|
-| `config.py` | Validated YAML-backed detector/event settings |
-| `types.py` | Backend-neutral `Detection` and `ExtractedEvent` contracts |
-| `detection/base.py` | Detector abstract interface |
-| `detection/classical.py` | Color-agnostic Lab/motion belt foreground plus legacy dark-object fallback |
-| `detection/yolo.py` | Optional Ultralytics custom-detector adapter, CPU/GPU selectable |
-| `extraction.py` | Sequential decode, temporal confirmation/tracking, quality selection, crop and manifest |
+| `config.py` | Validated YAML detector, event, diagnostics, and runtime settings |
+| `types.py` | Immutable backend-neutral `Detection`, `ExtractedEvent`, and `EventRecord` contracts |
+| `detection/base.py` | Detector interface and shared full-frame trigger policy |
+| `detection/classical.py` | Lab/motion belt foreground and legacy dark-contour candidates |
+| `detection/yolo.py` | Ultralytics adapter, strict segmentation checks, ROI inference, coordinate restoration |
+| `events.py` | Shared passage processor, association, timing modes, quality, and canonical crop |
+| `extraction.py` | Offline video adapter, image/mask persistence, manifest and event-report writers |
+| `live.py` | Bounded capture queue, event-driven live classification, metrics, JSONL sink |
 | `dataset.py` | Manifest loading, source-grouped split, chirality-safe transforms |
 | `models.py` | TinyCNN/ResNet/MobileNet/ViT factory |
-| `training.py` | Class-weighted PyTorch training, AMP/device controls, metrics/checkpoints |
-| `inference.py` | Checkpoint loading and image predictions |
-| `diagnostics.py` | ROI/trigger/detection preview image |
-| `cli.py` | Public commands and end-to-end orchestration |
-| `gui_commands.py` | Testable GUI-to-CLI command construction |
-| `gui.py` | Lightweight Tkinter forms, settings editor, and background process log |
+| `training.py` | Class-weighted training, AMP/device controls, metrics/checkpoints |
+| `inference.py` | One-time classifier loading and identical path/array preprocessing |
+| `diagnostics.py` | Clean-frame ROI/trigger/mask/candidate calibration preview |
+| `cli.py` | Public offline, training, preview, and live commands |
+| `gui_commands.py` / `gui.py` | GUI-to-CLI construction and Tkinter process controls |
 
-## Extraction lifecycle
+## Detection contract
 
-The current lightweight extractor is intended for one well-spaced glove moving through a central trigger zone:
+`Detection` always uses full-frame pixel coordinates and contains:
 
-1. A detector candidate must have its complete bounding box inside the trigger zone. An optional inner margin adds clearance from the boundary. The legacy center-inside policy is available only when explicitly configured.
-2. It is tentative until observed for `min_detected_frames`.
-3. The nearest plausible detection is associated using a frame-diagonal distance gate.
-4. Each candidate receives a quality score combining centrality, detector confidence, and sharpness.
-5. Only the highest-scoring frame is retained in memory.
-6. After `exit_missing_frames`, the event is finalized once.
-7. A cooldown suppresses immediate re-triggering.
-8. EOF explicitly finalizes an active event.
+- tight `x1, y1, x2, y2` bounds;
+- confidence and optional class ID;
+- optional immutable polygon as `tuple[tuple[float, float], ...]`.
 
-With no candidate, the state remains idle and no crop/classifier call is made. Long empty intervals are therefore normal. The belt-foreground backend uses plausible foreground occupancy to adapt MOG2 during empty gaps and freeze or slow learning while a glove is present, preventing a stationary passage from being absorbed into the background too quickly.
+Classical and box-only backends return `polygon=None`. YOLO segmentation retains the
+instance polygon and derives the tight box from it. No full-resolution binary mask is
+stored per detection. Polygon area and mask/bbox fill ratio are derived lazily.
 
-When multiple candidates are visible, the default single-object extractor treats the frame as ambiguous rather than selecting the highest-confidence region. Calibration previews run detection on the untouched decoded frame and draw ROI, trigger, and candidate graphics only afterward; diagnostic overlays must never become detector input.
+A detector reports candidates; it does not decide passage eligibility. This is necessary
+for previews and audit records to show partial gloves. `PassageProcessor` applies
+`inside_trigger()` consistently to every backend. With full containment enabled, a
+mask-derived box crossing the trigger boundary is detected but is not eligible.
 
-The crop expands the chosen box and clamps it to frame boundaries. Export then letterboxes it to one configured square resolution without aspect distortion (`256x256` by default). Dataset and deployment extraction use the same operation. A YOLO segmentation result uses mask-derived tight bounds before this crop stage; box-only checkpoints retain their predicted box.
+### YOLO ROI inference
 
-## Detector strategy
+With `yolo_crop_to_roi: true`:
 
-The default `belt_foreground` backend estimates the dominant belt color in Lab space on each frame and segments pixels by perceptual color distance. This makes crop extraction independent of whether a glove is black, white, red, blue, yellow, or another visually distinct color. When MOG2 produces a plausible temporal foreground, it is preferred so a moving target is not merged with static colored distractors; color distance is the fallback. Configuration controls ROI, trigger geometry, color distance, motion modeling, morphology, area, and solidity. The former `dark_contour` backend remains available as a controlled-scene fallback.
+1. normalized `roi` is converted using the original frame dimensions;
+2. YOLO receives only that pixel crop;
+3. local box and polygon coordinates are offset back to the original frame;
+4. trigger gating, previews, crops, manifests, and live JSONL use full-frame coordinates.
 
-"Color-agnostic" does not mean visually impossible camouflage can be solved from one RGB frame. If glove and belt pixels are effectively indistinguishable, detection needs motion history, a more contrasting belt/background, another sensing modality, or a learned model that can exploit shape/context. Touching gloves remain an instance-separation problem.
+`roi` and `trigger_zone` therefore retain their existing normalized full-frame meaning.
+`yolo_require_masks: true` validates that the loaded model task is segmentation and
+raises on any returned box without a polygon. Empty segmentation results are valid.
 
-Upgrade paths, in recommended order:
+## Passage lifecycle
 
-1. Calibrated empty-belt reference or robust spatial belt model for stronger illumination invariance.
-2. Better single-object temporal association and explicit ambiguity records.
-3. Custom YOLO detector for camouflage, clutter, and exposure variability.
-4. Instance segmentation when touching gloves must be separated.
+The processor intentionally represents one well-spaced physical glove:
 
-All upgrades should implement `GloveDetector` and preserve downstream event contracts.
+1. All candidates are retained for ambiguity and partial diagnostics.
+2. Multiple candidates are rejected by default; the processor never chooses one silently.
+3. Eligible observations are associated deterministically using center displacement and
+   bbox IoU. Optional mask IoU is available but disabled by default because it is more
+   expensive and not yet calibrated.
+4. Confirmation uses either frame counts or elapsed time.
+5. Quality preserves centrality, detector confidence, and sharpness. Optional mask area,
+   area stability, trigger clearance, and ROI/frame-edge penalties default to zero so
+   existing selection behavior is not silently changed.
+6. Only the best frame is retained in memory.
+7. Exit timeout finalizes one accepted crop; rearming then requires continuous empty evidence, and any detection resets cooldown to suppress duplicates.
+8. EOF accepts a confirmed passage and audits an unconfirmed/partial remainder.
+
+Time mode uses the timestamps supplied by the source. Live mode supplies monotonic capture
+time; offline mode supplies deterministic `frame_index / fps`. Dropped or intentionally
+skipped live frames do not count as missing observations. At the next processed
+observation, elapsed-time confirmation/exit/cooldown thresholds remain physical durations.
+Frame mode remains the backward-compatible default.
+
+## Crop contract
+
+`create_event_crop()` is the only crop implementation:
+
+- `bbox`: padded tight rectangle (compatibility default);
+- `masked`: keep polygon pixels and zero everything outside;
+- `masked_fill`: keep polygon pixels and replace outside pixels with the deterministic
+  median background color from outside-mask pixels in the padded crop.
+
+Every mode then follows the same optional square bounds and fixed-size aspect-preserving
+letterbox stage. Glove geometry is never stretched. Mask modes fail clearly when a
+box-only detection is supplied. Crop mode is hashed with the extraction configuration;
+compare modes on the identical locked source/session split rather than mixing datasets.
+The hash covers detector settings, event/crop settings, and detection frequency. Purely
+operational diagnostics, queue size, report interval, and warm-up settings are excluded.
+
+## Accepted and rejected event contracts
+
+`manifest.csv` contains accepted classifier inputs and includes detector confidence,
+segmentation usage, mask area, mask/bbox fill ratio, candidate count, geometry, quality,
+and config hash. `event_report.csv` contains accepted and rejected outcomes such as
+`multiple_candidates`, `partial`, `track_lost`, `insufficient_confirmation`,
+`low_sharpness`, and `end_of_stream`.
+
+Large polygons are not embedded in CSV. `event.save_masks: true` stores compact polygon
+JSON files under `masks/` and puts their relative paths in the accepted manifest.
+Detections below YOLO's configured confidence/NMS threshold are not visible downstream;
+measure detector misses separately against passage annotations.
+
+## Live operation
+
+`LatestFrameCapture` owns a queue of one or two frames. When full, it removes the oldest
+frame before inserting the newest. This bounds latency rather than buffering seconds of
+stale camera data. Counters report captured, processed, and dropped frames.
+
+At startup, detector and classifier are loaded once and optionally warmed once. YOLO runs
+for tracking; the classifier runs exactly once when a passage becomes accepted. A JSONL
+sink or callback receives accepted and rejected event records without embedding robot or
+PLC commands. Periodic stderr reports use rolling averages for detector, event,
+classifier, and accepted-event latency.
+
+`runtime.detect_every_n_frames` defaults to one. Higher values are explicit performance
+experiments and can reduce temporal evidence. For deterministic files and evaluation,
+prefer `infer-video`; `infer-live` is designed for cameras and real-time streams.
 
 ## Model and preprocessing contract
 
-- Class order is `left`, then `right`.
-- Images are loaded RGB, resized to the checkpoint image size, converted to tensors, and ImageNet-normalized.
-- Training may apply color jitter and small rotations.
+- Detector class is one class: `0 = glove`; source chirality labels never affect detection.
+- Classifier order is `left`, then `right`.
+- Canonical crops are loaded RGB, resized to checkpoint size, tensorized, and
+  ImageNet-normalized.
+- Path and in-memory classifier methods call the same transform.
 - Horizontal reflection is intentionally excluded.
-- Checkpoints store architecture name, class order, image size, preprocessing identifier, and best validation metrics.
-- Inference reconstructs architectures without downloading pretrained weights, then loads the checkpoint state.
+- Checkpoints store architecture, class order, image size, preprocessing ID, and metrics.
 
 ## GPU behavior
 
-- `--device auto` selects CUDA when `torch.cuda.is_available()`, otherwise CPU.
-- `--device cuda` or `cuda:N` makes accelerator intent explicit and fails if CUDA is unavailable.
-- `--amp` enables CUDA mixed precision; it is safely disabled on non-CUDA devices.
-- `--workers N` and pinned memory improve GPU feeding where the host allows multiprocessing.
-- YOLO device and half precision are independent YAML options.
+- Classifier `auto/cpu/cuda/cuda:N` controls remain explicit.
+- Classifier AMP is optional and only enabled on CUDA.
+- YOLO device and half precision remain independent YAML settings.
+- Live startup loads and moves each model once; neither model is reloaded per frame/event.
 
-The architecture does not impose CPU as a research constraint. CPU support remains useful for extraction bootstrap, CI, and reproducibility.
+No FPS, latency, detector accuracy, or end-to-end accuracy is claimed without measurements
+on target hardware and real glove footage.
 
 ## Data and leakage boundaries
 
-Generated crops are not independent if they originate from the same recording. `grouped_split()` keeps complete source videos together. Future metadata should extend grouping to session, glove pair/lot, date, camera, and continuous parent recording.
-
-Potential leakage channels include background condition, exposure, compression, belt dirt, source filename, crop geometry, and recording session. Because left and right originate from separate streams, nuisance-only and background-only baselines are important.
+Generated crops from one recording are correlated. `grouped_split()` keeps complete source
+videos together. Production experiments should group by the highest correlated unit:
+session, continuous parent recording, glove pair/lot, camera, and condition. Compare bbox
+and mask-suppressed crops using the exact same frozen groups.
 
 ## Known structural limitations
 
-- One active lightweight track, not a full multi-object tracker.
-- No explicit accepted/rejected/ambiguous event manifest yet.
-- No entry/exit line-crossing semantics or polygonal/perspective-rectified ROI yet.
-- No locked test-set evaluator, calibration curves, or confidence rejection policy yet.
-- Source filename is the current grouping key; richer session manifests should replace it for serious experiments.
-
-These are deliberate continuation targets, not hidden claims.
+- One active passage, not a multi-object tracker; simultaneous instances are rejected.
+- No line-crossing or perspective-rectified polygonal ROI semantics.
+- Low-confidence proposals suppressed inside YOLO cannot receive downstream reject rows.
+- No locked real-data test set, production weights, calibration curves, or confidence
+  rejection policy is stored in this repository.
+- Source filename remains the current grouping key until richer session manifests arrive.

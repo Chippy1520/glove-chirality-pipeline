@@ -26,8 +26,8 @@ def main(argv: list[str] | None = None) -> None:
             self.process: subprocess.Popen[str] | None = None
             self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
             self.root.title("Glove Chirality Pipeline")
-            self.root.geometry("1080x780")
-            self.root.minsize(900, 680)
+            self.root.geometry("1180x900")
+            self.root.minsize(980, 760)
             self._style(ttk)
 
             default_config = Path("configs/default.yaml")
@@ -76,6 +76,8 @@ def main(argv: list[str] | None = None) -> None:
                     value = filedialog_module.asksaveasfilename(defaultextension=".yaml", filetypes=[("YAML", "*.yaml *.yml"), ("All files", "*.*")])
                 elif mode == "save-image":
                     value = filedialog_module.asksaveasfilename(defaultextension=".jpg", filetypes=[("Images", "*.jpg *.png"), ("All files", "*.*")])
+                elif mode == "save-jsonl":
+                    value = filedialog_module.asksaveasfilename(defaultextension=".jsonl", filetypes=[("JSON Lines", "*.jsonl"), ("All files", "*.*")])
                 elif mode in {"video", "video-or-directory"}:
                     value = filedialog_module.askopenfilename(filetypes=[("Videos", "*.mkv *.avi *.mp4 *.mov *.m4v"), ("All files", "*.*")])
                 elif mode == "image-or-directory":
@@ -158,19 +160,32 @@ def main(argv: list[str] | None = None) -> None:
                 "morph_kernel": tk_module.IntVar(value=11),
                 "min_area_ratio": tk_module.DoubleVar(value=0.015),
                 "max_area_ratio": tk_module.DoubleVar(value=0.55),
+                "yolo_model": tk_module.StringVar(value="yolo11n.pt"),
+                "yolo_confidence": tk_module.DoubleVar(value=0.35),
+                "yolo_device": tk_module.StringVar(value="auto"),
+                "yolo_half": tk_module.BooleanVar(value=False),
+                "yolo_imgsz": tk_module.IntVar(value=640),
+                "yolo_iou": tk_module.DoubleVar(value=0.50),
+                "yolo_max_det": tk_module.IntVar(value=5),
+                "yolo_use_masks": tk_module.BooleanVar(value=True),
+                "yolo_require_masks": tk_module.BooleanVar(value=False),
+                "yolo_crop_to_roi": tk_module.BooleanVar(value=False),
                 "min_detected_frames": tk_module.IntVar(value=2),
                 "reject_multiple_detections": tk_module.BooleanVar(value=True),
                 "exit_missing_frames": tk_module.IntVar(value=5),
                 "cooldown_frames": tk_module.IntVar(value=8),
                 "crop_padding": tk_module.DoubleVar(value=0.12),
+                "crop_mode": tk_module.StringVar(value="bbox"),
                 "output_size": tk_module.IntVar(value=256),
                 "make_square": tk_module.BooleanVar(value=True),
             }
             detector = ttk_module.LabelFrame(tab, text="Detector", style="Section.TLabelframe", padding=8)
             detector.grid(row=2, column=0, sticky="nsew", padx=(0, 5), pady=5)
             event = ttk_module.LabelFrame(tab, text="Passage and crop", style="Section.TLabelframe", padding=8)
-            event.grid(row=2, column=1, sticky="nsew", padx=(5, 0), pady=5)
-            tab.columnconfigure((0, 1), weight=1)
+            event.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
+            yolo = ttk_module.LabelFrame(tab, text="YOLO segmentation", style="Section.TLabelframe", padding=8)
+            yolo.grid(row=2, column=2, sticky="nsew", padx=(5, 0), pady=5)
+            tab.columnconfigure((0, 1, 2), weight=1)
 
             labels = [
                 ("Backend", "backend"), ("ROI x1,y1,x2,y2", "roi"),
@@ -206,9 +221,29 @@ def main(argv: list[str] | None = None) -> None:
                 self._entry(event, ttk_module, row, label, self.setting_vars[key], width=20)
             ttk_module.Checkbutton(event, text="Make square crop before export", variable=self.setting_vars["make_square"]).grid(row=len(event_labels), column=0, columnspan=2, sticky="w", padx=6, pady=5)
             ttk_module.Checkbutton(event, text="Reject frames with multiple candidates", variable=self.setting_vars["reject_multiple_detections"]).grid(row=len(event_labels) + 1, column=0, columnspan=2, sticky="w", padx=6, pady=5)
+            ttk_module.Label(event, text="Crop mode").grid(row=len(event_labels) + 2, column=0, sticky="w", padx=6, pady=5)
+            ttk_module.Combobox(event, textvariable=self.setting_vars["crop_mode"], values=("bbox", "masked", "masked_fill"), state="readonly", width=16).grid(row=len(event_labels) + 2, column=1, sticky="w", padx=6, pady=5)
+
+            self._entry(yolo, ttk_module, 0, "Model path", self.setting_vars["yolo_model"], width=18)
+            yolo_labels = [
+                ("Confidence", "yolo_confidence"),
+                ("Device", "yolo_device"),
+                ("Image size", "yolo_imgsz"),
+                ("IoU threshold", "yolo_iou"),
+                ("Maximum detections", "yolo_max_det"),
+            ]
+            for row, (label, key) in enumerate(yolo_labels, 1):
+                self._entry(yolo, ttk_module, row, label, self.setting_vars[key], width=18)
+            for row, (label, key) in enumerate([
+                ("Half precision", "yolo_half"),
+                ("Use segmentation masks", "yolo_use_masks"),
+                ("Require segmentation masks", "yolo_require_masks"),
+                ("Run YOLO on ROI only", "yolo_crop_to_roi"),
+            ], len(yolo_labels) + 1):
+                ttk_module.Checkbutton(yolo, text=label, variable=self.setting_vars[key]).grid(row=row, column=0, columnspan=2, sticky="w", padx=6, pady=4)
 
             buttons = ttk_module.Frame(tab)
-            buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=10)
+            buttons.grid(row=3, column=0, columnspan=3, sticky="e", pady=10)
 
             def save_as():
                 value = filedialog_module.asksaveasfilename(
@@ -273,6 +308,19 @@ def main(argv: list[str] | None = None) -> None:
             self._config_row(video, ttk_module, filedialog_module, 2)
             ttk_module.Button(video, text="Run video inference", style="Run.TButton", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_video(self.infer_video_path.get(), self.infer_checkpoint.get(), self.infer_video_output.get(), self.config_path.get(), self.infer_device.get()))).grid(row=3, column=1, sticky="e", padx=8, pady=8)
 
+            live = ttk_module.LabelFrame(tab, text="Real-time event inference", style="Section.TLabelframe", padding=8)
+            live.pack(fill="x", pady=5)
+            self.live_source = tk_module.StringVar(value="0")
+            self.live_output = tk_module.StringVar()
+            self.live_amp = tk_module.BooleanVar(value=False)
+            self._entry(live, ttk_module, 0, "Camera index / stream source", self.live_source)
+            self._path_row(live, ttk_module, filedialog_module, 1, "JSONL event output", self.live_output, "save-jsonl")
+            ttk_module.Checkbutton(live, text="Classifier CUDA AMP", variable=self.live_amp).grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=5)
+            live_buttons = ttk_module.Frame(live)
+            live_buttons.grid(row=3, column=1, sticky="e", padx=8, pady=8)
+            ttk_module.Button(live_buttons, text="Start", style="Run.TButton", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_live(self.live_source.get(), self.infer_checkpoint.get(), self.live_output.get(), self.config_path.get(), self.infer_device.get(), self.live_amp.get()))).pack(side="left", padx=4)
+            ttk_module.Button(live_buttons, text="Stop", command=self._stop).pack(side="left", padx=4)
+
             images = ttk_module.LabelFrame(tab, text="Existing crop inference", style="Section.TLabelframe", padding=8)
             images.pack(fill="x", pady=5)
             self.infer_images_input, self.infer_images_output = tk_module.StringVar(), tk_module.StringVar()
@@ -307,11 +355,11 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 config = ExtractionConfig.from_yaml(self.config_path.get())
                 detector, event = config.detector, config.event
-                for key in ("backend", "require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
+                for key in ("backend", "require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
                     self.setting_vars[key].set(getattr(detector, key))
                 self.setting_vars["roi"].set(", ".join(str(value) for value in detector.roi))
                 self.setting_vars["trigger_zone"].set(", ".join(str(value) for value in detector.trigger_zone))
-                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "output_size", "make_square"):
+                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "crop_mode", "output_size", "make_square"):
                     self.setting_vars[key].set(getattr(event, key))
                 if not quiet:
                     self._append_log(f"Loaded settings: {self.config_path.get()}\n")
@@ -329,9 +377,9 @@ def main(argv: list[str] | None = None) -> None:
                 detector.backend = self.setting_vars["backend"].get()
                 detector.roi = self._parse_box(self.setting_vars["roi"].get())
                 detector.trigger_zone = self._parse_box(self.setting_vars["trigger_zone"].get())
-                for key in ("require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
+                for key in ("require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
                     setattr(detector, key, self.setting_vars[key].get())
-                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "output_size", "make_square"):
+                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "crop_mode", "output_size", "make_square"):
                     setattr(event, key, self.setting_vars[key].get())
                 detector.validate()
                 event.validate()

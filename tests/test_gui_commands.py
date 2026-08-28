@@ -27,6 +27,11 @@ def test_train_command_includes_gpu_controls():
     assert command[command.index("--workers") + 1] == "4"
 
 
+def test_preview_command_includes_detector_warmup():
+    command = gui_commands.preview("video.mkv", "preview.jpg", 30.0, "config.yaml", 3.0)
+    assert command[command.index("--warmup-seconds") + 1] == "3.0"
+
+
 def test_required_gui_fields_fail_early():
     with pytest.raises(ValueError, match="Required"):
         gui_commands.infer_video("", "model.pt", "output", "config.yaml", "auto")

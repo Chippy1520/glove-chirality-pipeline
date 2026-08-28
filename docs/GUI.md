@@ -42,6 +42,7 @@ Edit the most frequently calibrated parameters:
 - event confirmation, exit, and cooldown frames;
 - rejection of frames containing multiple simultaneous candidates;
 - crop padding and square-crop policy.
+- fixed export image size (256 pixels by default).
 
 Load an existing YAML, save changes in place, or save a new copy. Advanced YAML values that are not shown remain intact when editing an existing configuration.
 
@@ -67,6 +68,7 @@ The GUI does not hide errors or fabricate success. The final subprocess exit cod
 
 1. Open **Extraction settings**, load a copied YAML, and adjust the ROI/trigger geometry.
 2. Use **Calibration preview** on early, middle, and late timestamps for every glove color.
+   The detector warm-up processes preceding frames so temporal background state is not initialized from only the selected glove frame.
 3. Extract a small annotated subset and verify misses, duplicates, and crop completeness.
    Include entirely empty clips and long gaps between gloves; both must produce no extra events.
 4. Extract the complete labeled dataset only after passage-level calibration.

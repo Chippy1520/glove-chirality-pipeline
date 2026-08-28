@@ -19,7 +19,7 @@ Measure empty intervals explicitly: empty lead-in/tail, long inter-glove gaps, a
 Generate previews at early, middle, and late timestamps:
 
 ```bash
-glove-pipeline preview --video VIDEO.mkv --seconds 30 --config CONFIG.yaml --output preview.jpg
+glove-pipeline preview --video VIDEO.mkv --seconds 30 --warmup-seconds 2 --config CONFIG.yaml --output preview.jpg
 ```
 
 Tune ROI and trigger-zone geometry first, then `color_distance_threshold` and motion-background settings across every glove color. Make the trigger zone large enough for the complete glove bounding box, and verify that partial entry/exit frames are rejected while each chosen representative box remains wholly inside it. Exclude light strips, enclosure borders, and areas where incomplete distractor gloves dominate. Include gloves close to the belt color explicitly; if RGB contrast is physically insufficient, test a custom detector or change the belt/background rather than introducing color-specific thresholds.

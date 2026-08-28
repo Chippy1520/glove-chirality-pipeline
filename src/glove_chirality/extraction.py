@@ -82,6 +82,25 @@ def _crop(frame: np.ndarray, box: Detection, padding: float, square: bool) -> np
     return frame[y1:y2, x1:x2]
 
 
+def _letterbox(image: np.ndarray, size: int) -> np.ndarray:
+    """Resize without aspect distortion and center on a fixed square canvas."""
+    height, width = image.shape[:2]
+    if height == 0 or width == 0:
+        return image
+    scale = min(size / width, size / height)
+    resized_width = max(1, round(width * scale))
+    resized_height = max(1, round(height * scale))
+    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+    resized = cv2.resize(image, (resized_width, resized_height), interpolation=interpolation)
+    fill = np.median(image.reshape(-1, image.shape[2]), axis=0).astype(image.dtype)
+    canvas = np.empty((size, size, image.shape[2]), dtype=image.dtype)
+    canvas[:] = fill
+    x1 = (size - resized_width) // 2
+    y1 = (size - resized_height) // 2
+    canvas[y1:y1 + resized_height, x1:x1 + resized_width] = resized
+    return canvas
+
+
 def extract_video(
     video_path: str | Path,
     output_dir: str | Path,
@@ -90,6 +109,7 @@ def extract_video(
 ) -> list[ExtractedEvent]:
     """Sequentially decode a video and emit one best crop per accepted passage."""
     config = config or ExtractionConfig()
+    config.event.validate()
     if label not in {"left", "right", "unknown"}:
         raise ValueError("label must be left, right, or unknown")
     video_path, output_dir = Path(video_path), Path(output_dir)
@@ -121,6 +141,7 @@ def extract_video(
             event_id = f"{label}__{video_path.stem}__e{sequence:06d}"
             image_path = image_dir / f"{event_id}.jpg"
             crop = _crop(best.frame, best.detection, config.event.crop_padding, config.event.make_square)
+            crop = _letterbox(crop, config.event.output_size)
             if crop.size and cv2.imwrite(str(image_path), crop):
                 if config.event.save_full_frames:
                     cv2.imwrite(str(full_dir / f"{event_id}.jpg"), best.frame)

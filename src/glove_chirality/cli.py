@@ -52,6 +52,7 @@ def build_parser():
     preview.add_argument("--video", required=True)
     preview.add_argument("--output", required=True)
     preview.add_argument("--seconds", type=float, default=0.0)
+    preview.add_argument("--warmup-seconds", type=float, default=2.0)
     preview.add_argument("--config", default="configs/default.yaml")
 
     train = sub.add_parser("train", help="Train a swappable chirality classifier")
@@ -91,7 +92,7 @@ def main(argv=None):
         _extract_sources([(args.left, "left"), (args.right, "right")], Path(args.output), ExtractionConfig.from_yaml(args.config))
     elif args.command == "preview":
         from glove_chirality.diagnostics import save_calibration_preview
-        print(save_calibration_preview(args.video, args.output, ExtractionConfig.from_yaml(args.config), args.seconds))
+        print(save_calibration_preview(args.video, args.output, ExtractionConfig.from_yaml(args.config), args.seconds, args.warmup_seconds))
     elif args.command == "train":
         from glove_chirality.training import train_classifier
         metrics = train_classifier(

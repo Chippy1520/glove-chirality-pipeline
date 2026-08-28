@@ -8,17 +8,32 @@ from glove_chirality.config import ExtractionConfig
 from glove_chirality.detection import build_detector
 
 
-def save_calibration_preview(video: str | Path, output: str | Path, config: ExtractionConfig, seconds: float = 0.0):
+def save_calibration_preview(
+    video: str | Path,
+    output: str | Path,
+    config: ExtractionConfig,
+    seconds: float = 0.0,
+    warmup_seconds: float = 2.0,
+):
     capture = cv2.VideoCapture(str(video))
     if not capture.isOpened():
         raise RuntimeError(f"Could not open video: {video}")
-    if seconds > 0:
-        capture.set(cv2.CAP_PROP_POS_MSEC, seconds * 1000)
-    ok, frame = capture.read()
+    fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+    target_frame = max(0, round(seconds * fps))
+    warmup_frames = max(0, round(warmup_seconds * fps))
+    capture.set(cv2.CAP_PROP_POS_FRAMES, max(0, target_frame - warmup_frames))
+    detector = build_detector(config.detector)
+    frame = None
+    detections = []
+    while capture.get(cv2.CAP_PROP_POS_FRAMES) <= target_frame:
+        ok, current = capture.read()
+        if not ok:
+            break
+        frame = current
+        detections = detector.detect(frame)
     capture.release()
-    if not ok:
+    if frame is None:
         raise RuntimeError("Could not decode preview frame")
-    detections = build_detector(config.detector).detect(frame)
     height, width = frame.shape[:2]
     for box, color, name in [
         (config.detector.roi, (255, 180, 0), "ROI"),

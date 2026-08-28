@@ -131,10 +131,12 @@ def main(argv: list[str] | None = None) -> None:
             preview.pack(fill="x", pady=5)
             self.preview_video, self.preview_output = tk_module.StringVar(), tk_module.StringVar()
             self.preview_seconds = tk_module.DoubleVar(value=0.0)
+            self.preview_warmup = tk_module.DoubleVar(value=2.0)
             self._path_row(preview, ttk_module, filedialog_module, 0, "Video", self.preview_video, "video")
             self._path_row(preview, ttk_module, filedialog_module, 1, "Preview image", self.preview_output, "save-image")
             self._entry(preview, ttk_module, 2, "Timestamp (seconds)", self.preview_seconds, width=16)
-            ttk_module.Button(preview, text="Render preview", command=lambda: self._guard(messagebox_module, lambda: gui_commands.preview(self.preview_video.get(), self.preview_output.get(), self.preview_seconds.get(), self.config_path.get()))).grid(row=3, column=1, sticky="e", padx=8, pady=8)
+            self._entry(preview, ttk_module, 3, "Detector warm-up (seconds)", self.preview_warmup, width=16)
+            ttk_module.Button(preview, text="Render preview", command=lambda: self._guard(messagebox_module, lambda: gui_commands.preview(self.preview_video.get(), self.preview_output.get(), self.preview_seconds.get(), self.config_path.get(), self.preview_warmup.get()))).grid(row=4, column=1, sticky="e", padx=8, pady=8)
 
         def _settings_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
             tab = ttk_module.Frame(self.notebook, padding=10)
@@ -161,6 +163,7 @@ def main(argv: list[str] | None = None) -> None:
                 "exit_missing_frames": tk_module.IntVar(value=5),
                 "cooldown_frames": tk_module.IntVar(value=8),
                 "crop_padding": tk_module.DoubleVar(value=0.12),
+                "output_size": tk_module.IntVar(value=256),
                 "make_square": tk_module.BooleanVar(value=True),
             }
             detector = ttk_module.LabelFrame(tab, text="Detector", style="Section.TLabelframe", padding=8)
@@ -197,11 +200,12 @@ def main(argv: list[str] | None = None) -> None:
                 ("Missing frames to close", "exit_missing_frames"),
                 ("Cooldown frames", "cooldown_frames"),
                 ("Crop padding fraction", "crop_padding"),
+                ("Export image size", "output_size"),
             ]
             for row, (label, key) in enumerate(event_labels):
                 self._entry(event, ttk_module, row, label, self.setting_vars[key], width=20)
-            ttk_module.Checkbutton(event, text="Make exact square crops", variable=self.setting_vars["make_square"]).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=5)
-            ttk_module.Checkbutton(event, text="Reject frames with multiple candidates", variable=self.setting_vars["reject_multiple_detections"]).grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=5)
+            ttk_module.Checkbutton(event, text="Make square crop before export", variable=self.setting_vars["make_square"]).grid(row=len(event_labels), column=0, columnspan=2, sticky="w", padx=6, pady=5)
+            ttk_module.Checkbutton(event, text="Reject frames with multiple candidates", variable=self.setting_vars["reject_multiple_detections"]).grid(row=len(event_labels) + 1, column=0, columnspan=2, sticky="w", padx=6, pady=5)
 
             buttons = ttk_module.Frame(tab)
             buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=10)
@@ -307,7 +311,7 @@ def main(argv: list[str] | None = None) -> None:
                     self.setting_vars[key].set(getattr(detector, key))
                 self.setting_vars["roi"].set(", ".join(str(value) for value in detector.roi))
                 self.setting_vars["trigger_zone"].set(", ".join(str(value) for value in detector.trigger_zone))
-                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "make_square"):
+                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "output_size", "make_square"):
                     self.setting_vars[key].set(getattr(event, key))
                 if not quiet:
                     self._append_log(f"Loaded settings: {self.config_path.get()}\n")
@@ -327,9 +331,10 @@ def main(argv: list[str] | None = None) -> None:
                 detector.trigger_zone = self._parse_box(self.setting_vars["trigger_zone"].get())
                 for key in ("require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio"):
                     setattr(detector, key, self.setting_vars[key].get())
-                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "make_square"):
+                for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "output_size", "make_square"):
                     setattr(event, key, self.setting_vars[key].get())
                 detector.validate()
+                event.validate()
                 config.to_yaml(path)
                 self._append_log(f"Saved settings: {path}\n")
             except (OSError, TypeError, ValueError, yaml.YAMLError, tk.TclError) as exc:

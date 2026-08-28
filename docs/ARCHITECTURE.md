@@ -53,7 +53,7 @@ With no candidate, the state remains idle and no crop/classifier call is made. L
 
 When multiple candidates are visible, the default single-object extractor treats the frame as ambiguous rather than selecting the highest-confidence region. Calibration previews run detection on the untouched decoded frame and draw ROI, trigger, and candidate graphics only afterward; diagnostic overlays must never become detector input.
 
-The crop expands the chosen box, clamps it to frame boundaries, and creates an exact square without stretching. Model transforms resize it later.
+The crop expands the chosen box and clamps it to frame boundaries. Export then letterboxes it to one configured square resolution without aspect distortion (`256x256` by default). Dataset and deployment extraction use the same operation. A YOLO segmentation result uses mask-derived tight bounds before this crop stage; box-only checkpoints retain their predicted box.
 
 ## Detector strategy
 

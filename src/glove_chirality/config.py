@@ -34,6 +34,7 @@ class DetectorConfig:
     yolo_class_id: int | None = None
     yolo_device: str = "auto"
     yolo_half: bool = False
+    yolo_use_masks: bool = True
 
     def __post_init__(self):
         self.validate()
@@ -52,8 +53,16 @@ class EventConfig:
     max_track_distance_ratio: float = 0.20
     crop_padding: float = 0.12
     make_square: bool = True
+    output_size: int = 256
     min_sharpness: float = 0.0
     save_full_frames: bool = False
+
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self):
+        if self.output_size <= 0:
+            raise ValueError("output_size must be positive")
 
 
 @dataclass

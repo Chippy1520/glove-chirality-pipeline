@@ -27,6 +27,8 @@ Expected data inventory, not stored here:
 - Explicit no-glove state and adaptive belt-background learning during empty conveyor gaps.
 - Full-bounding-box trigger containment by default; partial glove entry/exit frames are ineligible.
 - Calibration detection runs before overlay rendering, and multi-candidate frames are rejected as ambiguous by default.
+- YOLO segmentation masks provide tight crop bounds when available; all accepted crops are exported at one configured, aspect-preserving size.
+- Calibration previews warm temporal detectors on preceding frames rather than evaluating an uninitialized, randomly sought frame.
 - Shared temporal extraction path for training and inference.
 - Crop manifest with source, frame/time, geometry, quality, detector, provenance, and config hash.
 - Model factory: TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16.

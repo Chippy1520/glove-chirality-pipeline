@@ -5,7 +5,13 @@ import numpy as np
 import pytest
 
 from glove_chirality.config import DetectorConfig, EventConfig, ExtractionConfig
-from glove_chirality.extraction import config_hash, event_rows, extract_video, write_manifest
+from glove_chirality.extraction import (
+    _letterbox,
+    config_hash,
+    event_rows,
+    extract_video,
+    write_manifest,
+)
 from glove_chirality.types import Detection
 
 
@@ -51,7 +57,7 @@ def test_extracts_exactly_one_event_and_manifest(tmp_path, glove_color):
     assert detection.y2 <= 0.85 * 240
     assert events[0].image_path.exists()
     crop = cv2.imread(str(events[0].image_path))
-    assert crop is not None and crop.shape[0] == crop.shape[1]
+    assert crop is not None and crop.shape[:2] == (256, 256)
     rows = event_rows(events, output, config_hash(config))
     manifest = write_manifest(rows, output / "manifest.csv")
     assert manifest.exists()
@@ -79,3 +85,13 @@ def test_multiple_candidates_do_not_create_an_arbitrary_crop(tmp_path, monkeypat
     monkeypatch.setattr("glove_chirality.extraction.build_detector", lambda _config: AmbiguousDetector())
     events = extract_video(video, tmp_path / "output", "unknown", ExtractionConfig())
     assert events == []
+
+
+def test_letterbox_preserves_content_aspect_ratio():
+    image = np.zeros((40, 80, 3), dtype=np.uint8)
+    cv2.rectangle(image, (20, 10), (59, 29), (255, 255, 255), -1)
+    result = _letterbox(image, 100)
+    foreground = cv2.findNonZero(cv2.cvtColor(result, cv2.COLOR_BGR2GRAY))
+    _x, _y, width, height = cv2.boundingRect(foreground)
+    assert result.shape == (100, 100, 3)
+    assert width / height == pytest.approx(2.0, rel=0.06)

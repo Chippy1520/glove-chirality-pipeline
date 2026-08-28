@@ -29,11 +29,12 @@ def extract_single(input_path: str, output: str, label: str, config: str) -> lis
     ]
 
 
-def preview(video: str, output: str, seconds: float, config: str) -> list[str]:
+def preview(video: str, output: str, seconds: float, config: str, warmup_seconds: float = 2.0) -> list[str]:
     _required(video=video, output=output, config=config)
     return _base() + [
         "preview", "--video", video, "--output", output,
-        "--seconds", str(seconds), "--config", config,
+        "--seconds", str(seconds), "--warmup-seconds", str(warmup_seconds),
+        "--config", config,
     ]
 
 

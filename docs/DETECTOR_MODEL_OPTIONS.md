@@ -10,7 +10,7 @@ For production extraction, train a **single-class `glove` instance-segmentation 
 
 | Priority | Model | Output | Why test it | Important constraint |
 |---|---|---|---|---|
-| 1 | YOLO11n-seg | boxes + instance masks | Small, fast, and closest to the existing optional Ultralytics adapter | Ultralytics repository is AGPL-3.0; assess licensing before a closed industrial deployment |
+| 1 | YOLO11n-seg | boxes + instance masks | Small, fast, and supported by the existing adapter, which derives tight crop bounds from returned masks | Ultralytics repository is AGPL-3.0; assess licensing before a closed industrial deployment |
 | 2 | RF-DETR Seg Nano | boxes + instance masks | Small real-time transformer baseline, designed for fine-tuning, Apache-2.0 model/package path | Adds a new backend and should be benchmarked on the target deployment GPU |
 | 3 | Torchvision Mask R-CNN R50-FPN v2 | boxes + instance masks | Mature, conservative research baseline with BSD-3-Clause torchvision | Usually slower/heavier than nano real-time models |
 | Annotation aid | SAM 2.1 Small | prompted/video masks | Propagate masks through short clips to reduce manual polygon work | Use for annotation assistance, not as an unprompted passage detector |
@@ -70,4 +70,4 @@ Report model metrics and passage metrics separately:
 - extraction latency on the deployment device;
 - end-to-end chirality accuracy with extraction failures included.
 
-The recommended first comparison is classical foreground vs YOLO11n-seg vs RF-DETR Seg Nano on the same source-level split. Use Mask R-CNN as a slower reference if compute permits.
+The recommended first comparison is classical foreground vs YOLO11n-seg vs RF-DETR Seg Nano on the same source-level split. Use Mask R-CNN as a slower reference if compute permits. Export every accepted crop through the shared fixed-size letterbox stage so crop dimensions cannot become a classifier shortcut.

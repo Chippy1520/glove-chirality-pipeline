@@ -33,6 +33,8 @@ detector:
   yolo_class_id: null
   yolo_device: auto
   yolo_half: false
+  # A segmentation checkpoint uses mask-derived tight boxes automatically.
+  yolo_use_masks: true
 
 event:
   min_detected_frames: 2
@@ -44,5 +46,7 @@ event:
   max_track_distance_ratio: 0.20
   crop_padding: 0.12
   make_square: true
+  # Every exported training/deployment crop has identical pixel dimensions.
+  output_size: 256
   min_sharpness: 0.0
   save_full_frames: false

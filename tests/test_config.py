@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from glove_chirality.config import DetectorConfig, ExtractionConfig
+from glove_chirality.config import DetectorConfig, EventConfig, ExtractionConfig
 
 
 def test_default_config_loads():
@@ -13,12 +13,18 @@ def test_default_config_loads():
     assert config.detector.require_full_containment is True
     assert config.detector.adaptive_background is True
     assert config.event.reject_multiple_detections is True
+    assert config.event.output_size == 256
     assert config.event.make_square is True
 
 
 def test_trigger_margin_must_leave_a_nonempty_inner_zone():
     with pytest.raises(ValueError, match="trigger_inner_margin_ratio"):
         DetectorConfig(trigger_inner_margin_ratio=0.5)
+
+
+def test_output_size_must_be_positive():
+    with pytest.raises(ValueError, match="output_size"):
+        EventConfig(output_size=0)
 
 
 def test_unknown_config_key_fails(tmp_path):

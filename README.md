@@ -40,12 +40,14 @@ images + manifest.csv          classifier checkpoint
 - CPU `belt_foreground` detector combining Lab belt-color distance with optional temporal motion, independent of a specific glove color.
 - Legacy `dark_contour` fallback for controlled dark-glove recordings.
 - Optional Ultralytics YOLO adapter with the same detector interface.
+- Segmentation-aware YOLO extraction: when a trained checkpoint returns masks, their tight bounds drive containment and cropping.
 - Full-containment trigger gating: a glove is eligible only when its entire detected box is inside the trigger zone; partial entry/exit frames are rejected consistently by classical and YOLO backends.
 - Temporal event state machine with confirmation, tracking distance, exit timeout, cooldown, best-frame quality scoring, padded square crops, and exactly one emission per accepted event.
 - Explicit no-glove behavior: empty conveyor frames and long gaps emit no crop or prediction, while adaptive background learning refreshes the belt model between passages.
 - Ambiguity rejection: the single-object extractor does not arbitrarily choose among multiple simultaneous candidates.
 - Label provenance: left-only/right-only video streams attach known source labels; detection never uses the label.
 - Ordinary JPEG crops plus auditable CSV metadata.
+- Fixed-size, aspect-preserving crop export (`256x256` by default) shared by dataset and deployment extraction.
 - Grouped train/validation split by source video to prevent adjacent-event leakage.
 - Interchangeable `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, and `vit_b_16` classifiers.
 - Image inference and full video-to-event-to-prediction deployment commands.
@@ -89,9 +91,12 @@ First render a frame with the configured ROI, trigger zone, and detections:
 glove-pipeline preview \
   --video "D:/gloves/left/left_01.mkv" \
   --seconds 30 \
+  --warmup-seconds 2 \
   --config configs/default.yaml \
   --output outputs/preview.jpg
 ```
+
+Preview warms temporal detectors on preceding clean frames before evaluating the requested timestamp. This better matches sequential extraction than initializing MOG2 on a single randomly sought frame.
 
 Edit `configs/default.yaml` until:
 
@@ -125,6 +130,8 @@ data/chirality_v1/
 ```
 
 The crops are independent ordinary images and may be copied into any other workflow. `manifest.csv` records event ID, known-stream label and provenance, source video, representative frame/time, original bounding box, detector, quality score, and extraction-config hash.
+
+Every crop is exported at `event.output_size` square pixels (256 by default). Resizing preserves aspect ratio and letterboxes when necessary, so crop dimensions cannot become a classifier shortcut. Changing this setting requires regenerating the dataset; do not mix old variable-sized crops with the new export.
 
 Empty intervals are expected. They do not create `unknown` samples; `unknown` means an extracted glove event without a supplied source label. An entirely empty input produces a header-only manifest and zero images.
 

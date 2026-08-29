@@ -429,10 +429,21 @@ class PassageProcessor:
         height, width = frame.shape[:2]
         outcomes: list[PassageOutcome] = []
 
+        eligible = [
+            detection
+            for detection in detections
+            if inside_trigger(
+                detection,
+                self.config.detector,
+                width,
+                height,
+            )
+        ]
+
         if self.rearming:
-            if detections:
+            if eligible:
                 self.cooldown = self.config.event.cooldown_frames
-                self.cooldown_until_s = timestamp_s + self.config.event.cooldown_seconds
+                self.cooldown_until_s = (timestamp_s+ self.config.event.cooldown_seconds)
             elif self.config.event.timing_mode == "frames":
                 self.cooldown = max(0, self.cooldown - 1)
                 self.rearming = self.cooldown > 0
@@ -443,14 +454,14 @@ class PassageProcessor:
             event_latency = (time.perf_counter() - event_start) * 1000.0
             return FrameResult((), tuple(detections), detector_latency, event_latency)
 
-        if self.config.event.reject_multiple_detections and len(detections) > 1:
+        if self.config.event.reject_multiple_detections and len(eligible) > 1:
             if not self.ambiguity_latched:
                 outcomes.append(
                     self._record(
                         "multiple_candidates",
                         frame_index,
                         timestamp_s,
-                        len(detections),
+                        len(eligible),
                         None,
                     )
                 )
@@ -459,11 +470,6 @@ class PassageProcessor:
             self._reset(timestamp_s, cooldown=True)
         else:
             self.ambiguity_latched = False
-            eligible = [
-                detection
-                for detection in detections
-                if inside_trigger(detection, self.config.detector, width, height)
-            ]
             if detections and not eligible:
                 if not self.active and not self.seen:
                     self.pending_partial = (

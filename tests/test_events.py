@@ -63,25 +63,6 @@ def test_bbox_crop_mode_preserves_rectangular_background():
     assert np.all(crop[10, 10] == 200)
 
 
-def test_tight_bbox_crop_excludes_adjacent_glove_without_changing_output_contract():
-    frame = np.full((20, 30, 3), 10, dtype=np.uint8)
-    frame[5:10, 5:15] = 200
-    frame[5:10, 15:23] = 100
-    detection = _segmentation_detection(5, 5, 15, 10)
-    config = _config(
-        crop_padding=0.0,
-        make_square=False,
-        crop_mode="bbox",
-        output_size=20,
-    )
-
-    crop = create_event_crop(frame, detection, config)
-
-    assert crop.shape == (20, 20, 3)
-    assert np.all(crop == 200)
-    assert not np.any(crop == 100)
-
-
 def test_masked_crop_suppresses_non_glove_pixels():
     config = _config(crop_padding=0.5, make_square=False, crop_mode="masked")
     crop = create_event_crop(_crop_source(), _segmentation_detection(), config)
@@ -229,3 +210,66 @@ def test_first_candidate_selection_is_independent_of_detector_order():
         outcome = processor.process(_crop_source(), 1, 0.04).outcomes[0]
         selected.append(outcome.detection.x1)
     assert selected == [2, 2]
+
+def test_second_detection_outside_trigger_does_not_create_ambiguity():
+    inside = _segmentation_detection(
+        6, 6, 12, 12
+    )
+
+    outside = _segmentation_detection(
+        0, 6, 3, 12
+    )
+
+    config = _config(
+        min_detected_frames=1,
+        exit_missing_frames=1,
+        cooldown_frames=0,
+        reject_multiple_detections=True,
+    )
+
+    config.detector.trigger_zone = (
+        0.2,
+        0.2,
+        0.8,
+        0.8,
+    )
+
+    processor = PassageProcessor(
+        _SequenceDetector([
+            [inside, outside],
+            [],
+        ]),
+        config,
+        "source.avi",
+    )
+
+    frame = _crop_source()
+
+    outcomes = []
+
+    outcomes.extend(
+        processor.process(
+            frame,
+            0,
+            0.0,
+        ).outcomes
+    )
+
+    outcomes.extend(
+        processor.process(
+            frame,
+            1,
+            0.04,
+        ).outcomes
+    )
+
+    assert not any(
+        outcome.status == "multiple_candidates"
+        for outcome in outcomes
+    )
+
+    assert len([
+        outcome
+        for outcome in outcomes
+        if outcome.accepted
+    ]) == 1

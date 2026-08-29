@@ -1,0 +1,24 @@
+# Fill this record when the final detector is selected. Do not invent unknown values.
+status: pending_selection
+model_name: yolo11n_seg_glove_final_v2
+checkpoint_filename: yolo11n_seg_glove_final_v2.pt
+checkpoint_sha256: null
+source_checkpoint: yolo11n-seg.pt
+dataset_version: null
+class_names:
+  0: glove
+image_size: 640
+training_date: null
+epochs_requested: null
+best_epoch: null
+validation_metrics:
+  box_map50_95: null
+  mask_map50_95: null
+  passage_recall: null
+  false_positives_per_empty_hour: null
+hard_negative_notes: >-
+  Include reviewed empty-belt frames, stains, glare, reflections, conveyor marks,
+  and white/black patches with zero glove annotations. Annotate every real glove
+  in mixed glove+distractor frames and leave distractors unannotated.
+camera_session_notes: current camera calibration pending
+expected_config_file: configs/grip_current_camera.yaml

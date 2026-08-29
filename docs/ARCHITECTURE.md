@@ -80,8 +80,10 @@ With `yolo_crop_to_roi: true`:
 raises on any returned box without a polygon. Empty segmentation results are valid.
 The area-ratio defaults `0.0–1.0` preserve historical behavior. Camera-specific nontrivial
 limits reject detections inside the YOLO adapter, so rejected artifacts intentionally do not
-affect ambiguity, cooldown, trigger, event, or crop logic. They are also absent from
-downstream audit rows; detector-level evaluation must account for them separately.
+affect ambiguity, cooldown, trigger, event, or crop logic. `detect_with_diagnostics()` exposes
+raw, size-rejected, and returned counts plus rejected geometry to calibration tools only;
+normal `detect()` continues returning accepted detections exclusively. Detector-level
+evaluation must account for filtered candidates separately.
 
 ## Passage lifecycle
 

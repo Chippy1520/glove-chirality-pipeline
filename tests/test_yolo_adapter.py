@@ -3,8 +3,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from glove_chirality.config import DetectorConfig
+from glove_chirality.config import DetectorConfig, EventConfig, ExtractionConfig
 from glove_chirality.detection.yolo import YoloDetector, _polygon_box
+from glove_chirality.events import PassageProcessor
 from glove_chirality.types import Detection
 
 
@@ -94,6 +95,7 @@ def test_yolo_retains_polygon_and_maps_roi_coordinates_to_full_frame():
     assert detector.model.options["iou"] == 0.4
     assert detector.model.options["max_det"] == 3
     assert detector.model.options["classes"] == [0]
+    assert "half" not in detector.model.options
     assert len(detections) == 1
     detection = detections[0]
     assert (detection.x1, detection.y1, detection.x2, detection.y2) == (55, 26, 80, 60)
@@ -124,7 +126,8 @@ def test_yolo_rejects_boxes_outside_full_frame_area_gate():
         yolo_max_box_area_ratio=0.20,
     )
 
-    detections = _detector(config, result).detect(np.zeros((100, 100, 3), dtype=np.uint8))
+    detector = _detector(config, result)
+    detections = detector.detect(np.zeros((100, 100, 3), dtype=np.uint8))
 
     assert len(detections) == 1
     assert (detections[0].x1, detections[0].y1, detections[0].x2, detections[0].y2) == (
@@ -133,6 +136,70 @@ def test_yolo_rejects_boxes_outside_full_frame_area_gate():
         50,
         40,
     )
+    diagnostics = detector.last_diagnostics
+    assert diagnostics.raw_yolo_count == 3
+    assert diagnostics.size_rejected_count == 2
+    assert diagnostics.returned_detection_count == 1
+    assert [item.box_area_ratio for item in diagnostics.size_rejected] == pytest.approx(
+        [0.01, 0.36]
+    )
+
+    processor = PassageProcessor(
+        detector,
+        ExtractionConfig(
+            detector=config,
+            event=EventConfig(
+                min_detected_frames=1,
+                exit_missing_frames=1,
+                cooldown_frames=0,
+                output_size=32,
+            ),
+        ),
+        "diagnostic-isolation",
+        "test",
+    )
+    frame_result = processor.process(np.zeros((100, 100, 3), dtype=np.uint8), 0, 0.0)
+    assert len(frame_result.detections) == 1
+    assert all(outcome.reject_reason != "multiple_candidates" for outcome in frame_result.outcomes)
+
+    unfiltered, unfiltered_diagnostics = detector.detect_with_diagnostics(
+        np.zeros((100, 100, 3), dtype=np.uint8),
+        apply_size_filter=False,
+    )
+    assert len(unfiltered) == 3
+    assert unfiltered_diagnostics.size_rejected_count == 2
+    assert unfiltered_diagnostics.returned_detection_count == 3
+
+
+def test_default_size_limits_preserve_all_valid_boxes_and_half_true_is_compatible():
+    result = SimpleNamespace(
+        boxes=[_Box([0, 0, 100, 100])],
+        masks=SimpleNamespace(
+            xy=[np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32)]
+        ),
+    )
+    detector = _detector(
+        DetectorConfig(backend="yolo", yolo_model="custom.pt", yolo_half=True),
+        result,
+    )
+
+    assert len(detector.detect(np.zeros((100, 100, 3), dtype=np.uint8))) == 1
+    assert detector.last_diagnostics.size_rejected_count == 0
+    assert detector.model.options["half"] is True
+
+
+def test_half_uses_current_ultralytics_fp16_quantize_option_when_supported():
+    result = SimpleNamespace(boxes=[], masks=None)
+    detector = _detector(
+        DetectorConfig(backend="yolo", yolo_model="custom.pt", yolo_half=True),
+        result,
+    )
+    detector._supports_quantize = True
+
+    detector.detect(np.zeros((100, 100, 3), dtype=np.uint8))
+
+    assert detector.model.options["quantize"] == 16
+    assert "half" not in detector.model.options
 
 
 def test_yolo_require_masks_rejects_box_only_detection():

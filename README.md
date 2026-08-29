@@ -4,7 +4,7 @@ A modular computer-vision framework for turning fixed-camera conveyor videos int
 
 The central design rule is that dataset creation and deployment call the **same event extractor**. This prevents train/deployment crop skew.
 
-For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md), and [`docs/DETECTOR_MODEL_OPTIONS.md`](docs/DETECTOR_MODEL_OPTIONS.md).
+For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md), [`docs/CAMERA_CALIBRATION.md`](docs/CAMERA_CALIBRATION.md), and [`docs/DETECTOR_MODEL_OPTIONS.md`](docs/DETECTOR_MODEL_OPTIONS.md).
 
 ## Lightweight desktop GUI
 
@@ -286,6 +286,8 @@ Keep `crop_mode: bbox` until a source-grouped experiment demonstrates that `mask
 For the fixed GRIP Aug-27 camera, [`configs/grip_aug27_seed.yaml`](configs/grip_aug27_seed.yaml) records the measured `0.03–0.40` full-frame bbox-area gate. The gate runs after ROI coordinates are restored and before trigger/event logic, so physically tiny or oversized YOLO detections cannot become events or crops. These values are camera-specific and must be remeasured after changing camera position, lens, zoom, resolution, or ROI.
 
 The GRIP config also uses `crop_padding: 0.0` and `make_square: false`. The source crop therefore follows the selected mask-derived detection bbox rather than a padded square that may include a nearby glove. The source crop can have variable width and height; `_letterbox()` still creates a fixed 256×256 classifier input without aspect-ratio distortion. If another glove remains visible inside the selected rectangle, evaluate `masked` or `masked_fill` to retain only the selected instance polygon. Simultaneous/touching instances remain ambiguous and are rejected when `reject_multiple_detections: true`.
+
+For a moved/current camera, preserve the Aug-27 config and calibrate [`configs/grip_current_camera.yaml`](configs/grip_current_camera.yaml) with `python scripts/realtime_detector_calibration.py --camera 0 --config configs/grip_current_camera.yaml`. The current-camera file is intentionally safe-but-uncalibrated (`roi` full frame and size gate `0.0–1.0`) until real measurements replace those values. See the [camera calibration guide](docs/CAMERA_CALIBRATION.md) for Windows backend fallback, diagnostic rejected boxes, hard-negative annotation, versioning, and model provenance.
 
 ## Swapping components
 

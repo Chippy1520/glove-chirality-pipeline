@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from glove_chirality.config import DetectorConfig
 from glove_chirality.detection.base import GloveDetector
 from glove_chirality.types import Detection, Polygon
+
+
+@dataclass(frozen=True)
+class SizeRejectedDetection:
+    detection: Detection
+    box_area_ratio: float
+
+
+@dataclass(frozen=True)
+class YoloDetectionDiagnostics:
+    raw_yolo_count: int = 0
+    size_rejected_count: int = 0
+    returned_detection_count: int = 0
+    size_rejected: tuple[SizeRejectedDetection, ...] = ()
 
 
 def _polygon_points(polygon: np.ndarray) -> np.ndarray | None:
@@ -91,6 +107,13 @@ class YoloDetector(GloveDetector):
             raise RuntimeError("Install the YOLO option with: pip install -e .[yolo]") from exc
         self.config = config
         self.model = YOLO(config.yolo_model)
+        try:
+            from ultralytics.cfg import DEFAULT_CFG_DICT
+
+            self._supports_quantize = "quantize" in DEFAULT_CFG_DICT
+        except (ImportError, TypeError):
+            self._supports_quantize = False
+        self.last_diagnostics = YoloDetectionDiagnostics()
         model_task = getattr(self.model, "task", None)
         if config.yolo_require_masks and model_task != "segment":
             raise RuntimeError(
@@ -100,6 +123,15 @@ class YoloDetector(GloveDetector):
             )
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
+        detections, _ = self.detect_with_diagnostics(frame)
+        return detections
+
+    def detect_with_diagnostics(
+        self,
+        frame: np.ndarray,
+        *,
+        apply_size_filter: bool = True,
+    ) -> tuple[list[Detection], YoloDetectionDiagnostics]:
         height, width = frame.shape[:2]
         offset_x = offset_y = 0
         inference_frame = frame
@@ -107,7 +139,9 @@ class YoloDetector(GloveDetector):
             x1, y1, x2, y2 = _roi_box(self.config.roi, width, height)
             inference_frame = frame[y1:y2, x1:x2]
             if inference_frame.size == 0:
-                return []
+                diagnostics = YoloDetectionDiagnostics()
+                self.last_diagnostics = diagnostics
+                return [], diagnostics
             offset_x, offset_y = x1, y1
 
         options: dict[str, object] = {
@@ -116,8 +150,12 @@ class YoloDetector(GloveDetector):
             "imgsz": self.config.yolo_imgsz,
             "max_det": self.config.yolo_max_det,
             "verbose": False,
-            "half": self.config.yolo_half,
         }
+        if self.config.yolo_half:
+            if getattr(self, "_supports_quantize", False):
+                options["quantize"] = 16
+            else:
+                options["half"] = True
         if self.config.yolo_class_id is not None:
             options["classes"] = [self.config.yolo_class_id]
         if self.config.yolo_device != "auto":
@@ -132,6 +170,7 @@ class YoloDetector(GloveDetector):
         polygons = masks.xy if self.config.yolo_use_masks and masks is not None else []
 
         detections: list[Detection] = []
+        size_rejected: list[SizeRejectedDetection] = []
         frame_area = max(1, width * height)
         local_height, local_width = inference_frame.shape[:2]
         for index, box in enumerate(result.boxes):
@@ -167,24 +206,33 @@ class YoloDetector(GloveDetector):
             if bx2 <= bx1 or by2 <= by1:
                 continue
             box_area_ratio = ((bx2 - bx1) * (by2 - by1)) / frame_area
-            if not (
+            detection = Detection(
+                bx1,
+                by1,
+                bx2,
+                by2,
+                float(box.conf.item()),
+                class_id,
+                polygon,
+            )
+            rejected_by_size = not (
                 self.config.yolo_min_box_area_ratio
                 <= box_area_ratio
                 <= self.config.yolo_max_box_area_ratio
-            ):
-                continue
-            detections.append(
-                Detection(
-                    bx1,
-                    by1,
-                    bx2,
-                    by2,
-                    float(box.conf.item()),
-                    class_id,
-                    polygon,
-                )
             )
-        return detections
+            if rejected_by_size:
+                size_rejected.append(SizeRejectedDetection(detection, box_area_ratio))
+            if rejected_by_size and apply_size_filter:
+                continue
+            detections.append(detection)
+        diagnostics = YoloDetectionDiagnostics(
+            raw_yolo_count=len(result.boxes),
+            size_rejected_count=len(size_rejected),
+            returned_detection_count=len(detections),
+            size_rejected=tuple(size_rejected),
+        )
+        self.last_diagnostics = diagnostics
+        return detections, diagnostics
 
     def warmup(self, frame: np.ndarray) -> None:
         self.detect(frame)

@@ -74,6 +74,15 @@ def test_grip_config_uses_measured_size_gate_and_tight_bbox():
     assert config.event.crop_mode == "bbox"
 
 
+def test_current_camera_config_is_explicitly_uncalibrated_and_uses_final_model_name():
+    path = Path(__file__).parents[1] / "configs" / "grip_current_camera.yaml"
+    config = ExtractionConfig.from_yaml(path)
+    assert config.detector.yolo_model.endswith("yolo11n_seg_glove_final_v2.pt")
+    assert config.detector.roi == (0.0, 0.0, 1.0, 1.0)
+    assert config.detector.yolo_min_box_area_ratio == 0.0
+    assert config.detector.yolo_max_box_area_ratio == 1.0
+
+
 def test_unknown_config_key_fails(tmp_path):
     path = tmp_path / "bad.yaml"
     path.write_text(yaml.safe_dump({"event": {"typo_setting": 1}}), encoding="utf-8")

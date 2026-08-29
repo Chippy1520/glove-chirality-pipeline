@@ -24,6 +24,9 @@ class _OpenCvCapture:
     def release(self):
         self.released = True
 
+    def get(self, _property):
+        return 30.0
+
 
 class _ImmediateCapture:
     def __init__(self, frames):
@@ -79,7 +82,7 @@ class _Classifier:
 def test_latest_frame_capture_queue_stays_bounded_and_keeps_newest(monkeypatch):
     frames = [np.full((4, 4, 3), index, dtype=np.uint8) for index in range(10)]
     fake = _OpenCvCapture(frames)
-    monkeypatch.setattr("glove_chirality.live.cv2.VideoCapture", lambda _source: fake)
+    monkeypatch.setattr("glove_chirality.live.cv2.VideoCapture", lambda *_args: fake)
     capture = LatestFrameCapture(0, queue_size=2).start()
     deadline = time.monotonic() + 1.0
     while not capture.finished.is_set() and time.monotonic() < deadline:

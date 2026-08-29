@@ -14,6 +14,7 @@ from typing import TextIO
 import cv2
 import numpy as np
 
+from glove_chirality.camera import open_camera
 from glove_chirality.config import ExtractionConfig
 from glove_chirality.detection import build_detector
 from glove_chirality.events import PassageOutcome, PassageProcessor
@@ -32,9 +33,20 @@ class LatestFrameCapture:
 
     def __init__(self, source: int | str, queue_size: int = 2):
         self.source = source
-        self.capture = cv2.VideoCapture(source)
-        if not self.capture.isOpened():
-            raise RuntimeError(f"Could not open live source: {source}")
+        self._first_frame: np.ndarray | None = None
+        if isinstance(source, int):
+            opened = open_camera(source, capture_factory=cv2.VideoCapture)
+            self.capture = opened.capture
+            self._first_frame = opened.first_frame
+            print(
+                f"camera index={source} backend={opened.backend} "
+                f"resolution={opened.width}x{opened.height} fps={opened.fps:.2f}",
+                file=sys.stderr,
+            )
+        else:
+            self.capture = cv2.VideoCapture(source)
+            if not self.capture.isOpened():
+                raise RuntimeError(f"Could not open live source: {source}")
         self.queue: queue.Queue[CapturedFrame] = queue.Queue(maxsize=queue_size)
         self.stop_requested = threading.Event()
         self.finished = threading.Event()
@@ -50,23 +62,29 @@ class LatestFrameCapture:
         return self
 
     def _capture_loop(self) -> None:
+        def enqueue(frame: np.ndarray) -> None:
+            packet = CapturedFrame(self.captured_frames, time.monotonic(), frame)
+            self.captured_frames += 1
+            if self.queue.full():
+                try:
+                    self.queue.get_nowait()
+                    self.dropped_frames += 1
+                except queue.Empty:
+                    pass
+            try:
+                self.queue.put_nowait(packet)
+            except queue.Full:
+                self.dropped_frames += 1
+
         try:
+            if self._first_frame is not None:
+                enqueue(self._first_frame)
+                self._first_frame = None
             while not self.stop_requested.is_set():
                 ok, frame = self.capture.read()
                 if not ok:
                     break
-                packet = CapturedFrame(self.captured_frames, time.monotonic(), frame)
-                self.captured_frames += 1
-                if self.queue.full():
-                    try:
-                        self.queue.get_nowait()
-                        self.dropped_frames += 1
-                    except queue.Empty:
-                        pass
-                try:
-                    self.queue.put_nowait(packet)
-                except queue.Full:
-                    self.dropped_frames += 1
+                enqueue(frame)
         finally:
             self.capture.release()
             self.finished.set()

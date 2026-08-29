@@ -34,6 +34,8 @@ Expected data inventory, not stored here:
 - Frame-count and monotonic-time event timing, deterministic center/bbox-IoU association, and opt-in segmentation quality terms.
 - Accepted manifest plus explicit accepted/rejected event report; optional polygon JSON persistence.
 - Segmentation preview overlays masks, tight boxes, confidence, candidate count, partial/edge diagnostics, and ambiguity.
+- Real-time detector calibration reuses `ExtractionConfig`/`YoloDetector`, displays size-rejected candidates diagnostically, and saves versioned screenshots.
+- Integer camera sources use verified-frame Windows backend fallback (DirectShow, MSMF, then default) and report the successful stream geometry.
 - Bounded-queue `infer-live` with stale-frame dropping, one classifier call per accepted passage, JSONL output, model warm-up, and rolling runtime metrics.
 - Model factory: TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16.
 - Source-video-grouped validation split and selectable cross-entropy, weighted-cross-entropy, or recall-hybrid training.

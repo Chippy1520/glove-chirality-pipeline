@@ -71,11 +71,17 @@ With `yolo_crop_to_roi: true`:
 1. normalized `roi` is converted using the original frame dimensions;
 2. YOLO receives only that pixel crop;
 3. local box and polygon coordinates are offset back to the original frame;
-4. trigger gating, previews, crops, manifests, and live JSONL use full-frame coordinates.
+4. the restored bbox area is divided by original full-frame area and checked against the
+   configured YOLO min/max physical-size ratios;
+5. trigger gating, previews, crops, manifests, and live JSONL use full-frame coordinates.
 
 `roi` and `trigger_zone` therefore retain their existing normalized full-frame meaning.
 `yolo_require_masks: true` validates that the loaded model task is segmentation and
 raises on any returned box without a polygon. Empty segmentation results are valid.
+The area-ratio defaults `0.0–1.0` preserve historical behavior. Camera-specific nontrivial
+limits reject detections inside the YOLO adapter, so rejected artifacts intentionally do not
+affect ambiguity, cooldown, trigger, event, or crop logic. They are also absent from
+downstream audit rows; detector-level evaluation must account for them separately.
 
 ## Passage lifecycle
 
@@ -104,7 +110,7 @@ Frame mode remains the backward-compatible default.
 
 `create_event_crop()` is the only crop implementation:
 
-- `bbox`: padded tight rectangle (compatibility default);
+- `bbox`: tight rectangle with configurable padding (compatibility default);
 - `masked`: keep polygon pixels and zero everything outside;
 - `masked_fill`: keep polygon pixels and replace outside pixels with the deterministic
   median background color from outside-mask pixels in the padded crop.
@@ -113,6 +119,10 @@ Every mode then follows the same optional square bounds and fixed-size aspect-pr
 letterbox stage. Glove geometry is never stretched. Mask modes fail clearly when a
 box-only detection is supplied. Crop mode is hashed with the extraction configuration;
 compare modes on the identical locked source/session split rather than mixing datasets.
+For packed scenes, `crop_padding: 0.0` plus `make_square: false` uses the variable-size
+selected detection bbox exactly before letterboxing, avoiding neighbor pixels introduced
+only by padding or square expansion. Mask modes can suppress remaining pixels outside the
+selected instance polygon; they cannot resolve a merged/incorrect instance mask.
 The hash covers detector settings, event/crop settings, and detection frequency. Purely
 operational diagnostics, queue size, report interval, and warm-up settings are excluded.
 

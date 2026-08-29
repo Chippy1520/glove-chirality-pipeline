@@ -63,6 +63,25 @@ def test_bbox_crop_mode_preserves_rectangular_background():
     assert np.all(crop[10, 10] == 200)
 
 
+def test_tight_bbox_crop_excludes_adjacent_glove_without_changing_output_contract():
+    frame = np.full((20, 30, 3), 10, dtype=np.uint8)
+    frame[5:10, 5:15] = 200
+    frame[5:10, 15:23] = 100
+    detection = _segmentation_detection(5, 5, 15, 10)
+    config = _config(
+        crop_padding=0.0,
+        make_square=False,
+        crop_mode="bbox",
+        output_size=20,
+    )
+
+    crop = create_event_crop(frame, detection, config)
+
+    assert crop.shape == (20, 20, 3)
+    assert np.all(crop == 200)
+    assert not np.any(crop == 100)
+
+
 def test_masked_crop_suppresses_non_glove_pixels():
     config = _config(crop_padding=0.5, make_square=False, crop_mode="masked")
     crop = create_event_crop(_crop_source(), _segmentation_detection(), config)

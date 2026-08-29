@@ -83,6 +83,7 @@ def test_yolo_retains_polygon_and_maps_roi_coordinates_to_full_frame():
         yolo_imgsz=512,
         yolo_iou=0.4,
         yolo_max_det=3,
+        yolo_max_box_area_ratio=0.10,
     )
     detector = _detector(config, result)
 
@@ -104,6 +105,34 @@ def test_yolo_retains_polygon_and_maps_roi_coordinates_to_full_frame():
     )
     assert detection.class_id == 0
     assert detection.confidence == pytest.approx(0.9)
+
+
+def test_yolo_rejects_boxes_outside_full_frame_area_gate():
+    polygons = [
+        np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float32),
+        np.array([[20, 20], [50, 20], [50, 40], [20, 40]], dtype=np.float32),
+        np.array([[10, 10], [70, 10], [70, 70], [10, 70]], dtype=np.float32),
+    ]
+    result = SimpleNamespace(
+        boxes=[_Box([0, 0, 10, 10]), _Box([20, 20, 50, 40]), _Box([10, 10, 70, 70])],
+        masks=SimpleNamespace(xy=polygons),
+    )
+    config = DetectorConfig(
+        backend="yolo",
+        yolo_model="custom.pt",
+        yolo_min_box_area_ratio=0.03,
+        yolo_max_box_area_ratio=0.20,
+    )
+
+    detections = _detector(config, result).detect(np.zeros((100, 100, 3), dtype=np.uint8))
+
+    assert len(detections) == 1
+    assert (detections[0].x1, detections[0].y1, detections[0].x2, detections[0].y2) == (
+        20,
+        20,
+        50,
+        40,
+    )
 
 
 def test_yolo_require_masks_rejects_box_only_detection():

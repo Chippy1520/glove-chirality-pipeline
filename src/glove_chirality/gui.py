@@ -14,6 +14,15 @@ from glove_chirality.config import ExtractionConfig
 CUSTOM_YOLO_SUFFIXES = {".pt", ".pth", ".onnx", ".engine", ".torchscript"}
 
 
+def tight_detection_crop_preset() -> dict[str, object]:
+    """Use the selected detector box without padding or square expansion."""
+    return {
+        "crop_padding": 0.0,
+        "make_square": False,
+        "crop_mode": "bbox",
+    }
+
+
 def custom_yolo_segmentation_preset(model_path: str | Path) -> dict[str, object]:
     """Return safe Layer-1 defaults for a selected custom glove segmenter."""
     path = Path(model_path).expanduser()
@@ -207,6 +216,8 @@ def main(argv: list[str] | None = None) -> None:
                 "yolo_imgsz": tk_module.IntVar(value=640),
                 "yolo_iou": tk_module.DoubleVar(value=0.50),
                 "yolo_max_det": tk_module.IntVar(value=5),
+                "yolo_min_box_area_ratio": tk_module.DoubleVar(value=0.0),
+                "yolo_max_box_area_ratio": tk_module.DoubleVar(value=1.0),
                 "yolo_use_masks": tk_module.BooleanVar(value=True),
                 "yolo_require_masks": tk_module.BooleanVar(value=False),
                 "yolo_crop_to_roi": tk_module.BooleanVar(value=False),
@@ -263,6 +274,21 @@ def main(argv: list[str] | None = None) -> None:
             ttk_module.Checkbutton(event, text="Reject frames with multiple candidates", variable=self.setting_vars["reject_multiple_detections"]).grid(row=len(event_labels) + 1, column=0, columnspan=2, sticky="w", padx=6, pady=5)
             ttk_module.Label(event, text="Crop mode").grid(row=len(event_labels) + 2, column=0, sticky="w", padx=6, pady=5)
             ttk_module.Combobox(event, textvariable=self.setting_vars["crop_mode"], values=("bbox", "masked", "masked_fill"), state="readonly", width=16).grid(row=len(event_labels) + 2, column=1, sticky="w", padx=6, pady=5)
+            def apply_tight_crop():
+                for key, value in tight_detection_crop_preset().items():
+                    self.setting_vars[key].set(value)
+
+            ttk_module.Button(
+                event,
+                text="Use tight detection bbox",
+                command=apply_tight_crop,
+            ).grid(row=len(event_labels) + 3, column=0, columnspan=2, sticky="ew", padx=6, pady=(8, 4))
+            ttk_module.Label(
+                event,
+                text="Removes crop padding and square expansion; output is still aspect-preserving letterboxed.",
+                wraplength=300,
+                foreground="#3b5f7a",
+            ).grid(row=len(event_labels) + 4, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6))
 
             self.yolo_status = tk_module.StringVar(
                 value="Choose the trained glove segmentation checkpoint (usually best.pt)."
@@ -299,6 +325,8 @@ def main(argv: list[str] | None = None) -> None:
                 ("Image size", "yolo_imgsz"),
                 ("IoU threshold", "yolo_iou"),
                 ("Maximum detections", "yolo_max_det"),
+                ("Minimum box area ratio", "yolo_min_box_area_ratio"),
+                ("Maximum box area ratio", "yolo_max_box_area_ratio"),
             ]
             for row, (label, key) in enumerate(yolo_labels, 1):
                 self._entry(yolo, ttk_module, row, label, self.setting_vars[key], width=18)
@@ -450,7 +478,7 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 config = ExtractionConfig.from_yaml(self.config_path.get())
                 detector, event = config.detector, config.event
-                for key in ("backend", "require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_class_id", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
+                for key in ("backend", "require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_class_id", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_min_box_area_ratio", "yolo_max_box_area_ratio", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
                     value = getattr(detector, key)
                     if key == "yolo_class_id" and value is None:
                         value = 0
@@ -483,7 +511,7 @@ def main(argv: list[str] | None = None) -> None:
                 detector.backend = self.setting_vars["backend"].get()
                 detector.roi = self._parse_box(self.setting_vars["roi"].get())
                 detector.trigger_zone = self._parse_box(self.setting_vars["trigger_zone"].get())
-                for key in ("require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_class_id", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
+                for key in ("require_full_containment", "trigger_inner_margin_ratio", "color_distance_threshold", "motion_assist", "adaptive_background", "mog_empty_learning_rate", "mog_foreground_learning_rate", "morph_kernel", "min_area_ratio", "max_area_ratio", "yolo_model", "yolo_confidence", "yolo_class_id", "yolo_device", "yolo_half", "yolo_imgsz", "yolo_iou", "yolo_max_det", "yolo_min_box_area_ratio", "yolo_max_box_area_ratio", "yolo_use_masks", "yolo_require_masks", "yolo_crop_to_roi"):
                     setattr(detector, key, self.setting_vars[key].get())
                 for key in ("min_detected_frames", "reject_multiple_detections", "exit_missing_frames", "cooldown_frames", "crop_padding", "crop_mode", "output_size", "make_square"):
                     setattr(event, key, self.setting_vars[key].get())

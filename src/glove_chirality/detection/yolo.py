@@ -132,6 +132,7 @@ class YoloDetector(GloveDetector):
         polygons = masks.xy if self.config.yolo_use_masks and masks is not None else []
 
         detections: list[Detection] = []
+        frame_area = max(1, width * height)
         local_height, local_width = inference_frame.shape[:2]
         for index, box in enumerate(result.boxes):
             class_id = int(box.cls.item())
@@ -163,18 +164,26 @@ class YoloDetector(GloveDetector):
             by1 = max(0, min(height, by1 + offset_y))
             bx2 = max(0, min(width, bx2 + offset_x))
             by2 = max(0, min(height, by2 + offset_y))
-            if bx2 > bx1 and by2 > by1:
-                detections.append(
-                    Detection(
-                        bx1,
-                        by1,
-                        bx2,
-                        by2,
-                        float(box.conf.item()),
-                        class_id,
-                        polygon,
-                    )
+            if bx2 <= bx1 or by2 <= by1:
+                continue
+            box_area_ratio = ((bx2 - bx1) * (by2 - by1)) / frame_area
+            if not (
+                self.config.yolo_min_box_area_ratio
+                <= box_area_ratio
+                <= self.config.yolo_max_box_area_ratio
+            ):
+                continue
+            detections.append(
+                Detection(
+                    bx1,
+                    by1,
+                    bx2,
+                    by2,
+                    float(box.conf.item()),
+                    class_id,
+                    polygon,
                 )
+            )
         return detections
 
     def warmup(self, frame: np.ndarray) -> None:

@@ -22,7 +22,9 @@ Generate previews at early, middle, and late timestamps:
 glove-pipeline preview --video VIDEO.mkv --seconds 30 --warmup-seconds 2 --config CONFIG.yaml --output preview.jpg
 ```
 
-Tune ROI and trigger-zone geometry first, then the custom single-class YOLO11n-seg settings (`class 0 = glove`): confidence, image size, IoU, max detections, strict masks, and ROI-only inference. Preview must show the mask overlay/contour, mask-derived box, confidence, candidate count, full-containment status, and ambiguity. Make the trigger zone large enough for the complete mask-derived box. Verify that partial entry/exit masks are detected but remain ineligible. Exclude light strips and enclosure borders through ROI geometry rather than teaching the detector to ignore physical partial gloves.
+Tune ROI and trigger-zone geometry first, then the custom single-class YOLO11n-seg settings (`class 0 = glove`): confidence, image size, IoU, max detections, strict masks, ROI-only inference, and camera-specific full-frame bbox-area limits. Preview must show the mask overlay/contour, mask-derived box, confidence, candidate count, full-containment status, and ambiguity. Make the trigger zone large enough for the complete mask-derived box. Verify that partial entry/exit masks are detected but remain ineligible. Exclude light strips and enclosure edges from the ROI rather than relying on thresholds alone.
+
+Derive nontrivial bbox-area limits from annotated real detections and false positives for one fixed camera geometry. Recompute them after changing resolution, camera pose, lens, or zoom. Add empty-belt, stain, glare, reflection, and conveyor-mark frames as hard negatives with zero glove annotations; do not create distractor classes. Physical filtering is a deterministic safeguard, not a replacement for hard-negative detector retraining.
 
 Keep the classical detector only as a measured bootstrap baseline. Do not use generic COCO weights as a glove detector. For live deployment start from `configs/production.yaml`; preserve normalized full-frame ROI/trigger coordinates even though YOLO receives only the ROI crop.
 

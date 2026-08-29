@@ -1,5 +1,5 @@
-# Unvalidated deployment template for a custom single-class YOLO11n-seg checkpoint.
-# Calibrate geometry, thresholds, and timing on representative real footage.
+# GRIP Aug-27 fixed-camera configuration derived from measured accepted-event boxes.
+# Keep these thresholds tied to this camera geometry; remeasure after moving or zooming the camera.
 detector:
   backend: yolo
   roi: [0.15, 0.05, 0.90, 0.99]
@@ -7,7 +7,7 @@ detector:
   require_full_containment: true
   trigger_inner_margin_ratio: 0.0
 
-  yolo_model: checkpoints/yolo11n_seg_glove_best.pt
+  yolo_model: checkpoints/yolo11n_seg_glove_seed.pt
   yolo_confidence: 0.25
   yolo_class_id: 0
   yolo_device: 0
@@ -18,9 +18,9 @@ detector:
   yolo_imgsz: 640
   yolo_iou: 0.50
   yolo_max_det: 5
-  # Calibrate these physical-size safeguards per fixed camera.
-  yolo_min_box_area_ratio: 0.0
-  yolo_max_box_area_ratio: 1.0
+  # Reject physically implausible boxes before trigger/event/crop processing.
+  yolo_min_box_area_ratio: 0.03
+  yolo_max_box_area_ratio: 0.40
 
 event:
   min_detected_frames: 2
@@ -29,19 +29,20 @@ event:
   cooldown_frames: 8
   max_track_distance_ratio: 0.20
 
-  crop_padding: 0.12
-  make_square: true
+  # Follow the selected mask-derived bbox exactly so square expansion/padding does
+  # not pull adjacent gloves into the source crop. The final 256x256 image is
+  # aspect-preserving letterboxed, never stretched.
+  crop_padding: 0.0
+  make_square: false
   output_size: 256
   crop_mode: bbox
   save_masks: false
 
-  # Prefer time semantics for live capture because stale frames may be dropped.
   timing_mode: time
   min_detected_seconds: 0.08
   exit_missing_seconds: 0.20
   cooldown_seconds: 0.30
 
-  # Conservative, unvalidated segmentation quality terms. Tune only with real-video evidence.
   association_iou_weight: 0.25
   association_mask_iou_weight: 0.0
   quality_mask_area_weight: 0.0

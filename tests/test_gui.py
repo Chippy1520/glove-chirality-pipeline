@@ -1,6 +1,9 @@
 import pytest
 
-from glove_chirality.gui import custom_yolo_segmentation_preset
+from glove_chirality.gui import (
+    custom_yolo_segmentation_preset,
+    tight_detection_crop_preset,
+)
 
 
 def test_custom_yolo_preset_configures_safe_layer_one_defaults(tmp_path):
@@ -16,6 +19,14 @@ def test_custom_yolo_preset_configures_safe_layer_one_defaults(tmp_path):
         "yolo_use_masks": True,
         "yolo_require_masks": True,
         "yolo_crop_to_roi": True,
+    }
+
+
+def test_tight_detection_crop_preset_uses_selected_box_without_expansion():
+    assert tight_detection_crop_preset() == {
+        "crop_padding": 0.0,
+        "make_square": False,
+        "crop_mode": "bbox",
     }
 
 

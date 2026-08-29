@@ -18,6 +18,8 @@ def test_default_config_loads():
     assert config.event.timing_mode == "frames"
     assert config.event.make_square is True
     assert config.detector.yolo_require_masks is False
+    assert config.detector.yolo_min_box_area_ratio == 0.0
+    assert config.detector.yolo_max_box_area_ratio == 1.0
     assert config.runtime.detect_every_n_frames == 1
 
 
@@ -38,6 +40,10 @@ def test_segmentation_config_validation_is_explicit():
         DetectorConfig(yolo_use_masks=False, yolo_require_masks=True)
     with pytest.raises(ValueError, match="yolo_confidence"):
         DetectorConfig(yolo_confidence=1.1)
+    with pytest.raises(ValueError, match="box area ratios"):
+        DetectorConfig(yolo_min_box_area_ratio=0.4, yolo_max_box_area_ratio=0.4)
+    with pytest.raises(ValueError, match="box area ratios"):
+        DetectorConfig(yolo_min_box_area_ratio=-0.1)
     with pytest.raises(ValueError, match="roi"):
         DetectorConfig(roi=(0.8, 0.1, 0.2, 0.9))
     with pytest.raises(ValueError, match="yolo_class_id"):
@@ -56,6 +62,16 @@ def test_production_config_requires_single_class_segmentation():
     assert config.detector.yolo_require_masks is True
     assert config.detector.yolo_crop_to_roi is True
     assert config.event.timing_mode == "time"
+
+
+def test_grip_config_uses_measured_size_gate_and_tight_bbox():
+    path = Path(__file__).parents[1] / "configs" / "grip_aug27_seed.yaml"
+    config = ExtractionConfig.from_yaml(path)
+    assert config.detector.yolo_min_box_area_ratio == 0.03
+    assert config.detector.yolo_max_box_area_ratio == 0.40
+    assert config.event.crop_padding == 0.0
+    assert config.event.make_square is False
+    assert config.event.crop_mode == "bbox"
 
 
 def test_unknown_config_key_fails(tmp_path):

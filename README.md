@@ -267,6 +267,8 @@ detector:
   yolo_imgsz: 640
   yolo_iou: 0.50
   yolo_max_det: 5
+  yolo_min_box_area_ratio: 0.0
+  yolo_max_box_area_ratio: 1.0
 
 event:
   min_detected_frames: 2
@@ -280,6 +282,10 @@ event:
 ```
 
 Keep `crop_mode: bbox` until a source-grouped experiment demonstrates that `masked` or `masked_fill` improves held-out performance. Compare modes with exactly the same source/session splits; crop mode is part of the extraction config hash.
+
+For the fixed GRIP Aug-27 camera, [`configs/grip_aug27_seed.yaml`](configs/grip_aug27_seed.yaml) records the measured `0.03–0.40` full-frame bbox-area gate. The gate runs after ROI coordinates are restored and before trigger/event logic, so physically tiny or oversized YOLO detections cannot become events or crops. These values are camera-specific and must be remeasured after changing camera position, lens, zoom, resolution, or ROI.
+
+The GRIP config also uses `crop_padding: 0.0` and `make_square: false`. The source crop therefore follows the selected mask-derived detection bbox rather than a padded square that may include a nearby glove. The source crop can have variable width and height; `_letterbox()` still creates a fixed 256×256 classifier input without aspect-ratio distortion. If another glove remains visible inside the selected rectangle, evaluate `masked` or `masked_fill` to retain only the selected instance polygon. Simultaneous/touching instances remain ambiguous and are rejected when `reject_multiple_detections: true`.
 
 ## Swapping components
 

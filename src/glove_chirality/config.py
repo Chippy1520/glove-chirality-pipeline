@@ -41,6 +41,8 @@ class DetectorConfig:
     yolo_iou: float = 0.50
     yolo_max_det: int = 5
     yolo_crop_to_roi: bool = False
+    yolo_min_box_area_ratio: float = 0.0
+    yolo_max_box_area_ratio: float = 1.0
 
     def __post_init__(self):
         self.validate()
@@ -73,6 +75,13 @@ class DetectorConfig:
             raise ValueError("yolo_iou must be in (0.0, 1.0]")
         if self.yolo_max_det <= 0:
             raise ValueError("yolo_max_det must be positive")
+        if not (
+            0.0
+            <= self.yolo_min_box_area_ratio
+            < self.yolo_max_box_area_ratio
+            <= 1.0
+        ):
+            raise ValueError("YOLO box area ratios must satisfy 0 <= min < max <= 1")
 
 
 @dataclass

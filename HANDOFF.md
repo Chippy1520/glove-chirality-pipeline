@@ -27,10 +27,10 @@ Expected data inventory, not stored here:
 - Explicit no-glove state and adaptive belt-background learning during empty conveyor gaps.
 - Full-bounding-box trigger containment by default; partial glove entry/exit frames are ineligible.
 - Calibration detection runs before overlay rendering, and multi-candidate frames are rejected as ambiguous by default.
-- YOLO segmentation retains polygons, derives tight boxes, optionally runs on the configured ROI, and restores all geometry to full-frame coordinates.
+- YOLO segmentation retains polygons, derives tight boxes, optionally runs on the configured ROI, restores all geometry to full-frame coordinates, and can reject camera-specific implausible bbox-area ratios.
 - Strict mask mode rejects accidental box-only checkpoints; classical and intentional box-only YOLO remain compatible.
 - Shared `PassageProcessor` and `create_event_crop()` path for dataset extraction, offline inference, and live inference.
-- `bbox`, `masked`, and `masked_fill` crops with one aspect-preserving output stage; `bbox` remains default.
+- `bbox`, `masked`, and `masked_fill` crops with one aspect-preserving output stage; `bbox` remains default, with a tight detector-bbox preset for packed scenes.
 - Frame-count and monotonic-time event timing, deterministic center/bbox-IoU association, and opt-in segmentation quality terms.
 - Accepted manifest plus explicit accepted/rejected event report; optional polygon JSON persistence.
 - Segmentation preview overlays masks, tight boxes, confidence, candidate count, partial/edge diagnostics, and ambiguity.

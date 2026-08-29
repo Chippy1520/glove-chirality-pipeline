@@ -42,6 +42,9 @@ detector:
   yolo_imgsz: 640
   yolo_iou: 0.50
   yolo_max_det: 5
+  # Full-frame bbox area gate after ROI coordinates are restored; defaults disable filtering.
+  yolo_min_box_area_ratio: 0.0
+  yolo_max_box_area_ratio: 1.0
   # False preserves historical whole-frame YOLO behavior; production can enable ROI-only inference.
   yolo_crop_to_roi: false
 

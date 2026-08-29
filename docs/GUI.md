@@ -39,7 +39,7 @@ Edit the most frequently calibrated parameters:
 - temporal motion assistance;
 - adaptive empty-belt background learning and empty/foreground learning rates;
 - morphology and component-area limits;
-- YOLO custom model picker, confidence, glove class ID, device, half precision, image size, IoU, and maximum detections;
+- YOLO custom model picker, confidence, glove class ID, device, half precision, image size, IoU, maximum detections, and full-frame minimum/maximum bbox-area ratios;
 - one-click custom segmentation preset that selects the YOLO backend, requires masks, and enables ROI-only inference;
 - event confirmation, exit, and cooldown frames;
 - rejection of frames containing multiple simultaneous candidates;
@@ -64,6 +64,18 @@ To configure Layer 1 without hand-editing YAML:
 6. Use **Calibration preview** on representative video timestamps before extracting a dataset or starting live inference.
 
 The default config intentionally contains no generic YOLO checkpoint. Stock COCO `yolo11n.pt` is not a glove detector. A box-only model also fails when strict masks are enabled, instead of silently changing crop behavior.
+
+#### Remove tiny artifacts and avoid neighboring gloves
+
+For the measured GRIP camera setup, load `configs/grip_aug27_seed.yaml`. Its YOLO bbox-area limits reject detections outside `0.03–0.40` of the complete frame before they reach trigger or passage logic. Do not copy these limits to a changed camera geometry without remeasuring real glove and false-positive boxes.
+
+Click **Use tight detection bbox** under **Passage and crop** to set:
+
+- crop padding to `0.0`;
+- square expansion off; and
+- crop mode to `bbox`.
+
+This uses each selected mask-derived bbox as a variable-width/height source crop. It does **not** stretch the crop: aspect-preserving letterboxing still produces the classifier's fixed output dimensions. If a neighboring glove overlaps the rectangle, try `masked` or `masked_fill`, which suppresses pixels outside the selected instance polygon. The pipeline still rejects multiple eligible gloves by default rather than assigning an arbitrary passage.
 
 ### Train
 

@@ -1,0 +1,73 @@
+detector:
+  backend: yolo
+  roi:
+  - 0.1518
+  - 0.0081
+  - 0.9127
+  - 1.0
+  trigger_zone:
+  - 0.1655
+  - 0.2149
+  - 0.9
+  - 0.9515
+  require_full_containment: true
+  trigger_inner_margin_ratio: 0.0
+  dark_threshold: 105
+  color_distance_threshold: 28.0
+  belt_sample_stride: 8
+  motion_assist: true
+  mog_history: 250
+  mog_var_threshold: 16.0
+  mog_learning_rate: -1.0
+  adaptive_background: true
+  mog_empty_learning_rate: 0.02
+  mog_foreground_learning_rate: 0.0
+  blur_kernel: 7
+  morph_kernel: 11
+  min_area_ratio: 0.015
+  max_area_ratio: 0.55
+  min_solidity: 0.35
+  yolo_model: checkpoints/yolo11n_seg_glove_final_v2.pt
+  yolo_confidence: 0.25
+  yolo_class_id: 0
+  yolo_device: 0
+  yolo_half: true
+  yolo_use_masks: true
+  yolo_require_masks: true
+  yolo_imgsz: 640
+  yolo_iou: 0.5
+  yolo_max_det: 5
+  yolo_crop_to_roi: true
+  yolo_min_box_area_ratio: 0.14
+  yolo_max_box_area_ratio: 0.36
+event:
+  min_detected_frames: 2
+  reject_multiple_detections: true
+  exit_missing_frames: 5
+  cooldown_frames: 8
+  max_track_distance_ratio: 0.2
+  crop_padding: 0.0
+  make_square: false
+  output_size: 256
+  crop_mode: bbox
+  save_masks: false
+  min_sharpness: 0.0
+  save_full_frames: false
+  timing_mode: time
+  min_detected_seconds: 0.08
+  exit_missing_seconds: 0.2
+  cooldown_seconds: 0.3
+  association_iou_weight: 0.25
+  association_mask_iou_weight: 0.0
+  quality_mask_area_weight: 0.0
+  quality_mask_stability_weight: 0.0
+  quality_boundary_clearance_weight: 0.0
+  quality_edge_penalty_weight: 0.0
+diagnostics:
+  show_masks: true
+  mask_alpha: 0.3
+runtime:
+  capture_queue_size: 2
+  detect_every_n_frames: 1
+  report_interval_seconds: 5.0
+  warmup: true

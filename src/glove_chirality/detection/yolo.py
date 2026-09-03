@@ -188,14 +188,9 @@ class YoloDetector(GloveDetector):
                     local_box = mask_box
                     polygon = mask_polygon
                 elif self.config.yolo_require_masks:
-                    raise RuntimeError(
-                        "yolo_require_masks=true, but a YOLO detection had an "
-                        "invalid or degenerate segmentation polygon"
-                    )
+                    continue
             elif self.config.yolo_require_masks:
-                raise RuntimeError(
-                    "yolo_require_masks=true, but a YOLO detection had no segmentation polygon"
-                )
+                continue
             if local_box is None:
                 continue
             bx1, by1, bx2, by2 = local_box

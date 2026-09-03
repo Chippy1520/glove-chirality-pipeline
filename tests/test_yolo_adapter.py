@@ -236,18 +236,80 @@ def test_box_fallback_uses_floor_ceil_instead_of_shrinking_bounds():
     assert (detection.x1, detection.y1, detection.x2, detection.y2) == (10, 11, 31, 32)
 
 
-def test_strict_masks_reject_nonfinite_polygon():
+def test_strict_masks_skip_nonfinite_polygon():
     polygon = np.array([[5, 5], [np.nan, 20], [20, 20]], dtype=np.float32)
+
     result = SimpleNamespace(
         boxes=[_Box([5, 5, 20, 20])],
         masks=SimpleNamespace(xy=[polygon]),
     )
+
     detector = _detector(
-        DetectorConfig(backend="yolo", yolo_model="custom.pt", yolo_require_masks=True),
+        DetectorConfig(
+            backend="yolo",
+            yolo_model="custom.pt",
+            yolo_require_masks=True,
+        ),
         result,
     )
-    with pytest.raises(RuntimeError, match="invalid or degenerate"):
-        detector.detect(np.zeros((60, 80, 3), dtype=np.uint8))
+
+    detections, diagnostics = detector.detect_with_diagnostics(
+        np.zeros((60, 80, 3), dtype=np.uint8)
+    )
+
+    assert detections == []
+    assert diagnostics.raw_yolo_count == 1
+    assert diagnostics.returned_detection_count == 0
+
+def test_strict_masks_skip_only_invalid_detection_and_keep_valid_one():
+    invalid_polygon = np.array(
+        [[5, 5], [np.nan, 20], [20, 20]],
+        dtype=np.float32,
+    )
+
+    valid_polygon = np.array(
+        [[30, 30], [50, 30], [50, 50], [30, 50]],
+        dtype=np.float32,
+    )
+
+    result = SimpleNamespace(
+        boxes=[
+            _Box([5, 5, 20, 20]),
+            _Box([30, 30, 50, 50]),
+        ],
+        masks=SimpleNamespace(
+            xy=[
+                invalid_polygon,
+                valid_polygon,
+            ]
+        ),
+    )
+
+    detector = _detector(
+        DetectorConfig(
+            backend="yolo",
+            yolo_model="custom.pt",
+            yolo_require_masks=True,
+        ),
+        result,
+    )
+
+    detections = detector.detect(
+        np.zeros((80, 80, 3), dtype=np.uint8)
+    )
+
+    assert len(detections) == 1
+
+    detection = detections[0]
+
+    assert (
+        detection.x1,
+        detection.y1,
+        detection.x2,
+        detection.y2,
+    ) == (30, 30, 50, 50)
+
+    assert detection.polygon is not None
 
 
 def test_detection_canonicalizes_polygon_to_deeply_immutable_tuple():

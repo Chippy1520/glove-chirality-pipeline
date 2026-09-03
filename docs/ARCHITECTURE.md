@@ -40,7 +40,7 @@ frame.
 | `extraction.py` | Offline video adapter, image/mask persistence, manifest and event-report writers |
 | `live.py` | Bounded capture queue, event-driven live classification, metrics, JSONL sink |
 | `dataset.py` | Manifest loading, source-grouped split, chirality-safe transforms |
-| `models.py` | TinyCNN/ResNet/MobileNet/ViT factory |
+| `models.py` | TinyCNN, ResNet, MobileNet, ViT, Swin, ConvNeXt V2, and DINOv3 ConvNeXt factory |
 | `training.py` | Selectable CE/weighted-CE/recall-hybrid training, AMP/device controls, per-class metrics/checkpoints |
 | `inference.py` | Shared preprocessing plus optional class-specific probability thresholding |
 | `diagnostics.py` | Clean-frame ROI/trigger/mask/candidate calibration preview |

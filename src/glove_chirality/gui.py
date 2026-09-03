@@ -10,6 +10,7 @@ import yaml
 
 from glove_chirality import gui_commands
 from glove_chirality.config import ExtractionConfig
+from glove_chirality.models import CLASSIFIER_CHOICES
 
 CUSTOM_YOLO_SUFFIXES = {".pt", ".pth", ".onnx", ".engine", ".torchscript"}
 
@@ -386,7 +387,7 @@ def main(argv: list[str] | None = None) -> None:
             self._path_row(tab, ttk_module, filedialog_module, 1, "Dataset manifest", self.train_manifest, "csv")
             self._path_row(tab, ttk_module, filedialog_module, 2, "Checkpoint output", self.train_output, "save-model")
             fields = [
-                ("Model", self.train_model, ("tiny_cnn", "resnet18", "mobilenet_v3_small", "vit_b_16")),
+                ("Model", self.train_model, CLASSIFIER_CHOICES),
                 ("Device", self.train_device, ("auto", "cpu", "cuda", "cuda:0", "cuda:1")),
                 ("Epochs", self.train_epochs, None), ("Batch size", self.train_batch, None),
                 ("Image size", self.train_size, None), ("Learning rate", self.train_lr, None),

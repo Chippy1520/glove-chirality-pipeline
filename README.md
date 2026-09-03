@@ -4,7 +4,7 @@ A modular computer-vision framework for turning fixed-camera conveyor videos int
 
 The central design rule is that dataset creation and deployment call the **same event extractor**. This prevents train/deployment crop skew.
 
-For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md), [`docs/CAMERA_CALIBRATION.md`](docs/CAMERA_CALIBRATION.md), and [`docs/DETECTOR_MODEL_OPTIONS.md`](docs/DETECTOR_MODEL_OPTIONS.md).
+For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md), [`docs/CAMERA_CALIBRATION.md`](docs/CAMERA_CALIBRATION.md), [`docs/DETECTOR_MODEL_OPTIONS.md`](docs/DETECTOR_MODEL_OPTIONS.md), and [`docs/CLASSIFIER_MODEL_OPTIONS.md`](docs/CLASSIFIER_MODEL_OPTIONS.md).
 
 ## Lightweight desktop GUI
 

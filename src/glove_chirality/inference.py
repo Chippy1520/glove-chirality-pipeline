@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from glove_chirality.models import build_model
+from glove_chirality.models import build_model, model_backend
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -53,6 +53,12 @@ class TorchClassifier:
         )
         self.use_amp = amp and self.device.type == "cuda"
         saved = torch.load(checkpoint, map_location=self.device, weights_only=False)
+        expected_backend = model_backend(saved["model_name"])
+        if saved.get("model_backend", expected_backend) != expected_backend:
+            raise RuntimeError(
+                "Checkpoint model backend does not match this installation: "
+                f"saved={saved['model_backend']}, expected={expected_backend}"
+            )
         self.classes = saved["classes"]
         decision_index(
             self.classes,

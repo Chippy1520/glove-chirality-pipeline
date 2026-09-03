@@ -17,6 +17,7 @@ from glove_chirality.extraction import (
     write_event_report,
     write_manifest,
 )
+from glove_chirality.models import CLASSIFIER_CHOICES
 
 
 def _extract_sources(sources, output: Path, config: ExtractionConfig):
@@ -96,7 +97,7 @@ def build_parser():
     train.add_argument("--output", required=True)
     train.add_argument(
         "--model",
-        choices=["tiny_cnn", "resnet18", "mobilenet_v3_small", "vit_b_16"],
+        choices=CLASSIFIER_CHOICES,
         default="tiny_cnn",
     )
     train.add_argument("--epochs", type=int, default=10)

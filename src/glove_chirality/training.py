@@ -5,7 +5,7 @@ from collections import Counter
 from pathlib import Path
 
 from glove_chirality.dataset import CLASSES, ManifestDataset, grouped_split, read_manifest
-from glove_chirality.models import build_model
+from glove_chirality.models import build_model, model_backend
 
 LOSS_CHOICES = ("cross_entropy", "weighted_cross_entropy", "recall_hybrid")
 SELECTION_METRICS = (
@@ -199,6 +199,7 @@ def train_classifier(
                 {
                     "state_dict": model.state_dict(),
                     "model_name": model_name,
+                    "model_backend": model_backend(model_name),
                     "classes": CLASSES,
                     "image_size": image_size,
                     "preprocessing": "imagenet_rgb_normalized_no_reflection",

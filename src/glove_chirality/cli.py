@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from glove_chirality.analysis import EXPLANATION_METHODS
+from glove_chirality.comparison import COMPARISON_METRICS
 from glove_chirality.config import ExtractionConfig
 from glove_chirality.dataset import AUGMENTATION_CHOICES
 from glove_chirality.extraction import (
@@ -168,6 +169,19 @@ def build_parser():
     explain.add_argument("--stride", type=int, default=16)
     explain.add_argument("--overlay-alpha", type=float, default=0.45)
 
+    compare = sub.add_parser(
+        "compare-models",
+        help="Collect historical training metrics into a comparison CSV",
+    )
+    compare.add_argument(
+        "--input",
+        nargs="+",
+        required=True,
+        help="Metrics/history JSON file or directory (recursive)",
+    )
+    compare.add_argument("--output", required=True)
+    compare.add_argument("--sort-by", choices=COMPARISON_METRICS, default="recall_right")
+
     video = sub.add_parser("infer-video", help="Extract passages and classify each one")
     video.add_argument("--video", required=True)
     video.add_argument("--checkpoint", required=True)
@@ -318,6 +332,18 @@ def main(argv=None):
             overlay_alpha=args.overlay_alpha,
         )
         print(json.dumps(result, indent=2))
+    elif args.command == "compare-models":
+        from glove_chirality.comparison import (
+            discover_model_runs,
+            sort_model_runs,
+            write_comparison_csv,
+        )
+
+        runs = sort_model_runs(discover_model_runs(args.input), args.sort_by)
+        if not runs:
+            raise ValueError("No compatible *.metrics.json or *.history.json runs found")
+        output = write_comparison_csv(runs, args.output)
+        print(f"Wrote {len(runs)} model runs to {output}")
     elif args.command == "infer-video":
         _infer_video(args)
     elif args.command == "infer-live":

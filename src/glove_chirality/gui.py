@@ -4,12 +4,20 @@ import argparse
 import queue
 import subprocess
 import threading
+import webbrowser
 from pathlib import Path
 
 import yaml
 
 from glove_chirality import gui_commands
+from glove_chirality.comparison import (
+    COMPARISON_METRICS,
+    discover_model_runs,
+    sort_model_runs,
+    write_comparison_csv,
+)
 from glove_chirality.config import ExtractionConfig
+from glove_chirality.gui_processes import ProcessSlots
 from glove_chirality.models import CLASSIFIER_CHOICES
 
 CUSTOM_YOLO_SUFFIXES = {".pt", ".pth", ".onnx", ".engine", ".torchscript"}
@@ -53,8 +61,8 @@ def main(argv: list[str] | None = None) -> None:
     class App:
         def __init__(self, root: tk.Tk):
             self.root = root
-            self.process: subprocess.Popen[str] | None = None
-            self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
+            self.processes = ProcessSlots()
+            self.messages: queue.Queue[tuple[str, str, object]] = queue.Queue()
             self.root.title("GRIP · Glove Chirality Workstation")
             self.root.geometry("1280x920")
             self.root.minsize(1040, 760)
@@ -87,7 +95,9 @@ def main(argv: list[str] | None = None) -> None:
             self._training_tab(tk, ttk, filedialog, messagebox)
             self._inference_tab(tk, ttk, filedialog, messagebox)
             self._analysis_tab(tk, ttk, filedialog, messagebox)
+            self._comparison_tab(tk, ttk, filedialog, messagebox)
             self._log_panel(tk, ttk, scrolledtext)
+            self.root.protocol("WM_DELETE_WINDOW", self._close)
             self.root.after(100, self._drain_messages)
 
         @staticmethod
@@ -501,16 +511,30 @@ def main(argv: list[str] | None = None) -> None:
             ).grid(row=final_field_row + 2, column=0, columnspan=4, sticky="w", padx=8, pady=5)
             actions = ttk_module.Frame(tab)
             actions.grid(row=final_field_row + 3, column=0, columnspan=4, sticky="e", pady=10)
-            ttk_module.Button(
+            self.tensorboard_start_button = ttk_module.Button(
                 actions,
-                text="Open TensorBoard",
+                text="Start TensorBoard",
                 command=lambda: self._guard(
                     messagebox_module,
                     lambda: gui_commands.tensorboard(
                         self.train_tensorboard.get(), self.train_tensorboard_port.get()
                     ),
+                    slot="tensorboard",
                 ),
+            )
+            self.tensorboard_start_button.pack(side="left", padx=5)
+            ttk_module.Button(
+                actions,
+                text="Open dashboard",
+                command=lambda: self._open_tensorboard(messagebox_module),
             ).pack(side="left", padx=5)
+            self.tensorboard_stop_button = ttk_module.Button(
+                actions,
+                text="Stop TensorBoard",
+                command=lambda: self._stop("tensorboard"),
+                state="disabled",
+            )
+            self.tensorboard_stop_button.pack(side="left", padx=5)
             ttk_module.Button(
                 actions,
                 text="Start training",
@@ -698,6 +722,204 @@ def main(argv: list[str] | None = None) -> None:
                 foreground="#7a4e20",
             ).grid(row=7, column=0, columnspan=3, sticky="w", padx=8, pady=(4, 8))
 
+        def _comparison_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
+            tab = ttk_module.Frame(self.notebook, padding=14)
+            self.notebook.add(tab, text="6 · Compare")
+            ttk_module.Label(
+                tab,
+                text="Compare historical classifier runs",
+                style="Title.TLabel",
+            ).pack(anchor="w", pady=(0, 4))
+            ttk_module.Label(
+                tab,
+                text=(
+                    "Loads lightweight *.metrics.json and *.history.json artifacts recursively. "
+                    "Use the same locked source/session split before interpreting model differences."
+                ),
+                foreground="#475467",
+            ).pack(anchor="w", pady=(0, 10))
+
+            controls = ttk_module.LabelFrame(
+                tab,
+                text="Run archive",
+                style="Section.TLabelframe",
+                padding=10,
+            )
+            controls.pack(fill="x", pady=(0, 8))
+            default_root = Path("outputs") if Path("outputs").exists() else Path.cwd()
+            self.compare_root = tk_module.StringVar(value=str(default_root.resolve()))
+            self.compare_sort = tk_module.StringVar(value="recall_right")
+            self.comparison_runs = []
+            self._path_row(
+                controls,
+                ttk_module,
+                filedialog_module,
+                0,
+                "Metrics directory",
+                self.compare_root,
+                "directory",
+            )
+            ttk_module.Label(controls, text="Rank by").grid(
+                row=1, column=0, sticky="w", padx=8, pady=6
+            )
+            sort_box = ttk_module.Combobox(
+                controls,
+                textvariable=self.compare_sort,
+                values=COMPARISON_METRICS,
+                state="readonly",
+                width=18,
+            )
+            sort_box.grid(row=1, column=1, sticky="w", padx=8, pady=6)
+            sort_box.bind(
+                "<<ComboboxSelected>>",
+                lambda _event: self._render_comparison(),
+            )
+            ttk_module.Button(
+                controls,
+                text="Refresh runs",
+                style="Run.TButton",
+                command=lambda: self._refresh_comparison(messagebox_module),
+            ).grid(row=1, column=2, padx=5, pady=6)
+            ttk_module.Button(
+                controls,
+                text="Export CSV",
+                command=lambda: self._export_comparison(
+                    filedialog_module, messagebox_module
+                ),
+            ).grid(row=1, column=3, padx=5, pady=6)
+
+            columns = (
+                "model",
+                "augmentation",
+                "selection",
+                "split_id",
+                "accuracy",
+                "macro_recall",
+                "macro_f1",
+                "recall_left",
+                "recall_right",
+                "validation_samples",
+                "source",
+            )
+            table_frame = ttk_module.Frame(tab)
+            table_frame.pack(fill="both", expand=True)
+            self.compare_table = ttk_module.Treeview(
+                table_frame,
+                columns=columns,
+                show="headings",
+                selectmode="browse",
+            )
+            headings = {
+                "model": "Model",
+                "augmentation": "Augmentation",
+                "selection": "Selected by",
+                "split_id": "Split ID",
+                "accuracy": "Accuracy",
+                "macro_recall": "Macro recall",
+                "macro_f1": "Macro F1",
+                "recall_left": "Left recall",
+                "recall_right": "Right recall",
+                "validation_samples": "Val N",
+                "source": "Metrics artifact",
+            }
+            widths = {
+                "model": 165,
+                "augmentation": 105,
+                "selection": 105,
+                "split_id": 95,
+                "accuracy": 80,
+                "macro_recall": 95,
+                "macro_f1": 80,
+                "recall_left": 85,
+                "recall_right": 90,
+                "validation_samples": 60,
+                "source": 360,
+            }
+            for column in columns:
+                self.compare_table.heading(column, text=headings[column])
+                self.compare_table.column(
+                    column,
+                    width=widths[column],
+                    minwidth=55,
+                    anchor="w"
+                    if column in {"model", "augmentation", "selection", "split_id", "source"}
+                    else "center",
+                )
+            vertical = ttk_module.Scrollbar(
+                table_frame, orient="vertical", command=self.compare_table.yview
+            )
+            horizontal = ttk_module.Scrollbar(
+                table_frame, orient="horizontal", command=self.compare_table.xview
+            )
+            self.compare_table.configure(
+                yscrollcommand=vertical.set,
+                xscrollcommand=horizontal.set,
+            )
+            self.compare_table.grid(row=0, column=0, sticky="nsew")
+            vertical.grid(row=0, column=1, sticky="ns")
+            horizontal.grid(row=1, column=0, sticky="ew")
+            table_frame.rowconfigure(0, weight=1)
+            table_frame.columnconfigure(0, weight=1)
+            self.compare_status = tk_module.StringVar(
+                value="Choose a metrics directory and refresh."
+            )
+            ttk_module.Label(tab, textvariable=self.compare_status, foreground="#475467").pack(
+                anchor="w", pady=(7, 0)
+            )
+
+        def _refresh_comparison(self, messagebox_module):
+            try:
+                root = self.compare_root.get().strip()
+                if not root:
+                    raise ValueError("Choose a metrics directory")
+                self.comparison_runs = discover_model_runs([root])
+                self._render_comparison()
+                self.compare_status.set(
+                    f"Loaded {len(self.comparison_runs)} compatible historical run(s)."
+                )
+            except (OSError, TypeError, ValueError, tk.TclError) as exc:
+                messagebox_module.showerror("Could not load model runs", str(exc))
+
+        def _render_comparison(self):
+            if not hasattr(self, "compare_table"):
+                return
+            self.compare_table.delete(*self.compare_table.get_children())
+            runs = sort_model_runs(self.comparison_runs, self.compare_sort.get())
+            for run in runs:
+                self.compare_table.insert(
+                    "",
+                    "end",
+                    values=(
+                        run.model,
+                        run.augmentation,
+                        run.selection_metric,
+                        run.split_id,
+                        f"{run.accuracy:.4f}",
+                        f"{run.macro_recall:.4f}",
+                        f"{run.macro_f1:.4f}",
+                        f"{run.recall_left:.4f}",
+                        f"{run.recall_right:.4f}",
+                        run.validation_samples if run.validation_samples is not None else "—",
+                        run.source,
+                    ),
+                )
+
+        def _export_comparison(self, filedialog_module, messagebox_module):
+            try:
+                if not self.comparison_runs:
+                    raise ValueError("Refresh a directory containing model runs first")
+                output = filedialog_module.asksaveasfilename(
+                    defaultextension=".csv",
+                    filetypes=[("CSV", "*.csv"), ("All files", "*.*")],
+                )
+                if not output:
+                    return
+                runs = sort_model_runs(self.comparison_runs, self.compare_sort.get())
+                path = write_comparison_csv(runs, output)
+                self.compare_status.set(f"Exported {len(runs)} runs to {path}")
+            except (OSError, TypeError, ValueError, tk.TclError) as exc:
+                messagebox_module.showerror("Could not export comparison", str(exc))
+
         def _log_panel(self, tk_module, ttk_module, scrolledtext_module):
             tab = ttk_module.Frame(self.notebook, padding=10)
             self.notebook.add(tab, text="Run log")
@@ -706,7 +928,10 @@ def main(argv: list[str] | None = None) -> None:
             ttk_module.Label(controls, text="Pipeline command output", style="Title.TLabel").pack(side="left")
             ttk_module.Button(controls, text="Clear", command=self._clear_log).pack(side="right", padx=3)
             self.stop_button = ttk_module.Button(
-                controls, text="Stop", command=self._stop, state="disabled"
+                controls,
+                text="Stop pipeline",
+                command=lambda: self._stop("pipeline"),
+                state="disabled",
             )
             self.stop_button.pack(side="right", padx=3)
             self.log = scrolledtext_module.ScrolledText(
@@ -769,18 +994,31 @@ def main(argv: list[str] | None = None) -> None:
             except (OSError, TypeError, ValueError, yaml.YAMLError, tk.TclError) as exc:
                 messagebox_module.showerror("Could not save settings", str(exc))
 
-        def _guard(self, messagebox_module, builder):
+        def _guard(self, messagebox_module, builder, slot="pipeline"):
             try:
-                self._run(builder())
+                self._run(builder(), slot=slot)
             except (OSError, RuntimeError, TypeError, ValueError, tk.TclError) as exc:
                 messagebox_module.showerror("Cannot start", str(exc))
 
-        def _run(self, command: list[str]):
-            if self.process is not None and self.process.poll() is None:
-                raise RuntimeError("Another pipeline command is already running")
-            self._append_log("\n$ " + subprocess.list2cmdline(command) + "\n")
+        def _set_slot_controls(self, slot: str, running: bool) -> None:
+            if slot == "pipeline" and hasattr(self, "stop_button"):
+                self.stop_button.configure(state="normal" if running else "disabled")
+            elif slot == "tensorboard" and hasattr(self, "tensorboard_start_button"):
+                self.tensorboard_start_button.configure(
+                    state="disabled" if running else "normal"
+                )
+                self.tensorboard_stop_button.configure(
+                    state="normal" if running else "disabled"
+                )
+
+        def _run(self, command: list[str], slot: str = "pipeline"):
+            self.processes.ensure_available(slot)
+            label = "TensorBoard" if slot == "tensorboard" else "Pipeline"
+            self._append_log(
+                f"\n[{label}] $ " + subprocess.list2cmdline(command) + "\n"
+            )
             flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-            self.process = subprocess.Popen(
+            process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -788,31 +1026,50 @@ def main(argv: list[str] | None = None) -> None:
                 bufsize=1,
                 creationflags=flags,
             )
-            self.stop_button.configure(state="normal")
+            self.processes.claim(slot, process)
+            self._set_slot_controls(slot, True)
 
             def collect():
-                assert self.process is not None and self.process.stdout is not None
-                for line in self.process.stdout:
-                    self.messages.put(("line", line))
-                code = self.process.wait()
-                self.messages.put(("done", code))
+                assert process.stdout is not None
+                for line in process.stdout:
+                    self.messages.put((slot, "line", line))
+                code = process.wait()
+                self.messages.put((slot, "done", (process, code)))
 
             threading.Thread(target=collect, daemon=True).start()
 
-        def _stop(self):
-            if self.process is not None and self.process.poll() is None:
-                self.process.terminate()
-                self._append_log("Stop requested.\n")
+        def _stop(self, slot: str = "pipeline"):
+            process = self.processes.get(slot)
+            if process is not None and process.poll() is None:
+                process.terminate()
+                label = "TensorBoard" if slot == "tensorboard" else "pipeline"
+                self._append_log(f"[{label}] Stop requested.\n")
+
+        def _open_tensorboard(self, messagebox_module):
+            try:
+                port = int(self.train_tensorboard_port.get())
+                if not 1 <= port <= 65535:
+                    raise ValueError("TensorBoard port must be in [1, 65535]")
+                webbrowser.open(f"http://127.0.0.1:{port}")
+            except (OSError, TypeError, ValueError, tk.TclError) as exc:
+                messagebox_module.showerror("Could not open TensorBoard", str(exc))
+
+        def _close(self):
+            self.processes.terminate_all()
+            self.root.destroy()
 
         def _drain_messages(self):
             try:
                 while True:
-                    kind, value = self.messages.get_nowait()
+                    slot, kind, value = self.messages.get_nowait()
+                    label = "TensorBoard" if slot == "tensorboard" else "Pipeline"
                     if kind == "line":
-                        self._append_log(str(value))
+                        self._append_log(f"[{label}] {value}")
                     else:
-                        self._append_log(f"Process finished with exit code {value}.\n")
-                        self.stop_button.configure(state="disabled")
+                        process, code = value
+                        if self.processes.release(slot, process):
+                            self._set_slot_controls(slot, False)
+                        self._append_log(f"[{label}] finished with exit code {code}.\n")
             except queue.Empty:
                 pass
             self.root.after(100, self._drain_messages)

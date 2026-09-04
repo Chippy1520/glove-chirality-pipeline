@@ -44,9 +44,11 @@ frame.
 | `training.py` | Selectable loss/augmentation, TensorBoard logging, AMP/device controls, per-class metrics/checkpoints |
 | `inference.py` | Shared preprocessing plus optional class-specific probability thresholding |
 | `analysis.py` | Architecture-neutral SmoothGrad and occlusion sensitivity overlays with JSON metadata |
+| `comparison.py` | Lightweight historical metrics discovery, split-aware ranking, and CSV export |
 | `diagnostics.py` | Clean-frame ROI/trigger/mask/candidate calibration preview |
 | `cli.py` | Public offline, training, preview, and live commands |
-| `gui_commands.py` / `gui.py` | GUI-to-CLI construction and Tkinter process controls |
+| `gui_commands.py` / `gui.py` | GUI-to-CLI construction, concurrent TensorBoard, and comparison UI |
+| `gui_processes.py` | Independent pipeline/TensorBoard subprocess slots and shutdown |
 
 ## Detection contract
 

@@ -48,6 +48,17 @@ def test_explanation_options_parse():
     assert args.target_class == "right"
 
 
+def test_model_comparison_options_parse():
+    args = build_parser().parse_args([
+        "compare-models",
+        "--input", "runs", "archive/history.json",
+        "--output", "comparison.csv",
+        "--sort-by", "macro_f1",
+    ])
+    assert args.input == ["runs", "archive/history.json"]
+    assert args.sort_by == "macro_f1"
+
+
 def test_inference_recall_threshold_options_parse():
     args = build_parser().parse_args([
         "infer-video",

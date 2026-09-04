@@ -65,6 +65,13 @@ def test_explanation_and_tensorboard_commands_are_local():
     assert board[board.index("--port") + 1] == "6010"
 
 
+def test_model_comparison_command_preserves_metric_choice():
+    command = gui_commands.compare_models("runs", "comparison.csv", "recall_right")
+    assert command[3] == "compare-models"
+    assert command[command.index("--input") + 1] == "runs"
+    assert command[command.index("--sort-by") + 1] == "recall_right"
+
+
 def test_preview_command_includes_detector_warmup():
     command = gui_commands.preview("video.mkv", "preview.jpg", 30.0, "config.yaml", 3.0)
     assert command[command.index("--warmup-seconds") + 1] == "3.0"

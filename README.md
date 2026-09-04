@@ -14,7 +14,7 @@ Launch the Tkinter interface after installation:
 glove-pipeline-gui
 ```
 
-It provides explicit Layer-1 YOLO11n-seg checkpoint/configuration controls, extraction and calibration workflows, Layer-2 model/GPU training, optional TensorBoard logging, chirality-safe anti-spurious augmentation, image/video/live inference, per-image explanation maps, and live process logs. It calls the same CLI backend, so GUI and scripted runs remain reproducible. See [`docs/GUI.md`](docs/GUI.md).
+It provides explicit Layer-1 YOLO11n-seg checkpoint/configuration controls, extraction and calibration workflows, Layer-2 model/GPU training, concurrent TensorBoard access, chirality-safe anti-spurious augmentation, image/video/live inference, per-image explanation maps, historical model comparison, and live process logs. It calls the same CLI backend, so GUI and scripted runs remain reproducible. See [`docs/GUI.md`](docs/GUI.md).
 
 ## Pipeline
 

@@ -94,7 +94,7 @@ For an NVIDIA GPU, first install the CUDA-enabled PyTorch build matching the lap
 
 `anti_spurious` strengthens color/contrast changes, occasionally removes color, applies mild blur, and erases small random regions. It is intended for controlled retraining when explanations suggest texture, print, or label shortcuts. It never reflects an image. Compare it against `standard` on the identical split; do not assume stronger augmentation is automatically better.
 
-When a TensorBoard directory is set, training records loss, accuracy, macro recall/F1, and per-class recall. After events exist, click **Open TensorBoard**. The server binds only to `127.0.0.1` and can be stopped from **Run log**.
+When a TensorBoard directory is set, training records loss, accuracy, macro recall/F1, and per-class recall. Click **Start TensorBoard** before or during training; it uses an independent process slot, so it no longer blocks training or inference. **Open dashboard** launches `127.0.0.1:<port>` in the browser, and **Stop TensorBoard** stops only the dashboard. The pipeline command has its own independent stop control in **Run log**.
 
 ### 4 · Infer
 
@@ -129,9 +129,32 @@ glove-pipeline explain \
   --target-class right
 ```
 
+### 6 · Compare
+
+Choose a run archive and click **Refresh runs**. The table recursively discovers both normal `*.metrics.json` summaries and explicit-split `*.history.json` files without loading large model checkpoints. It shows:
+
+- model and augmentation policy;
+- checkpoint-selection metric;
+- source split ID;
+- accuracy, macro recall, macro F1, left recall, and right recall;
+- validation sample count and source artifact.
+
+Rank by any displayed metric and export the current ordering to CSV. For this project, right recall is the default because right→left errors are safety-critical, but it must be interpreted with left recall/false alarms and extraction performance.
+
+Future runs store a stable 12-character split ID derived from the complete train/validation source-video assignment. Compare architectures directly only when their split IDs match. Older artifacts remain visible with split ID `unknown`; verify their split provenance manually before drawing conclusions.
+
+CLI equivalent:
+
+```bash
+glove-pipeline compare-models \
+  --input outputs/models runs/experiments \
+  --output outputs/model_comparison.csv \
+  --sort-by recall_right
+```
+
 ## Execution behavior
 
-Commands run in a background subprocess so the window remains responsive. The Run log shows the exact reproducible command and live output. Only one command runs at a time; **Stop** requests termination and **Clear** clears the visible log.
+Pipeline commands run in a background subprocess so the window remains responsive. Training, extraction, and inference remain mutually exclusive to avoid accidental GPU/camera contention, while TensorBoard has a separate concurrent process slot. The Run log labels output by process. **Stop pipeline** and **Stop TensorBoard** affect only their respective process; **Clear** clears the visible log.
 
 The GUI does not hide errors or fabricate success. The final subprocess exit code is written to the log.
 

@@ -6,6 +6,7 @@ from glove_chirality.training import (
     build_training_loss,
     classification_metrics,
     metric_score,
+    source_split_id,
 )
 
 
@@ -43,3 +44,15 @@ def test_training_loss_validation_is_explicit():
         build_training_loss(torch, "unknown", weights, 1, 1.0)
     with pytest.raises(ValueError, match="non-negative"):
         build_training_loss(torch, "recall_hybrid", weights, 1, -1.0)
+
+
+def test_source_split_id_is_stable_and_changes_with_partition():
+    left = {"label": "left", "source_video": "left_a.mkv"}
+    right = {"label": "right", "source_video": "right_a.mkv"}
+    validation = {"label": "right", "source_video": "right_b.mkv"}
+
+    identifier = source_split_id([left, right], [validation])
+
+    assert identifier == source_split_id([right, left], [validation])
+    assert identifier != source_split_id([left, validation], [right])
+    assert len(identifier) == 12

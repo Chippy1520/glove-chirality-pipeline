@@ -110,6 +110,20 @@ def tensorboard(logdir: str, port: int = 6006) -> list[str]:
     ]
 
 
+def compare_models(
+    input_path: str,
+    output: str,
+    sort_by: str = "recall_right",
+) -> list[str]:
+    _required(input_path=input_path, output=output)
+    return _base() + [
+        "compare-models",
+        "--input", input_path,
+        "--output", output,
+        "--sort-by", sort_by,
+    ]
+
+
 def infer_video(
     video: str,
     checkpoint: str,

@@ -74,6 +74,8 @@ python -m tensorboard.main --logdir outputs/tensorboard --host 127.0.0.1
 
 Each run writes an overlay and JSON metadata. Use them to formulate a shortcut hypothesis, then test that hypothesis with controlled masking or augmentation and locked held-out sessions. These maps are not transformer attention weights and are not causal explanations.
 
+The GUI **Compare** tab and `compare-models` CLI collect normal training summaries and explicit-split histories without loading checkpoint tensors. New standard training runs store a source-partition split ID; only rank architectures as direct experiments when this ID matches. Right recall is the default ranking metric, but inspect the full class trade-off and end-to-end extraction failures.
+
 ## Weight licenses
 
 Repository code is MIT licensed, but pretrained weights have separate terms:

@@ -43,7 +43,7 @@ Expected data inventory, not stored here:
 - Accuracy, macro recall/balanced accuracy, per-class precision/recall, macro-F1, and confusion matrix output; checkpoints can be selected by right recall.
 - Optional right-class inference threshold shared by image, offline-video, and live modes for the explicit recall/precision trade-off.
 - Explicit CPU/GPU selection, CUDA mixed precision, and loader worker controls.
-- Modern lightweight Tkinter workstation for Layer 1 configuration, extraction, Layer 2 training/inference, TensorBoard, explanations, and run logs.
+- Modern lightweight Tkinter workstation for Layer 1 configuration, extraction, Layer 2 training/inference, concurrent TensorBoard, explanations, historical split-aware model comparison, and run logs.
 - Synthetic MJPEG integration test and GitHub Actions CI.
 
 ## What is not complete

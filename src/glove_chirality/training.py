@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -21,6 +22,18 @@ SELECTION_METRICS = (
     "recall_left",
     "recall_right",
 )
+
+
+def source_split_id(train_rows, validation_rows) -> str:
+    """Return a stable ID for the source/session partition used by a run."""
+    payload = {
+        "train": sorted({(row["label"], row["source_video"]) for row in train_rows}),
+        "validation": sorted(
+            {(row["label"], row["source_video"]) for row in validation_rows}
+        ),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()[:12]
 
 
 def classification_metrics(targets: list[int], predictions: list[int], classes: int = 2):
@@ -130,6 +143,7 @@ def train_classifier(
         raise ValueError(f"augmentation must be one of: {', '.join(AUGMENTATION_CHOICES)}")
     rows = read_manifest(manifest)
     train_rows, validation_rows = grouped_split(rows, validation_fraction, seed)
+    split_id = source_split_id(train_rows, validation_rows)
     if device_name == "auto":
         device_name = "cuda" if torch.cuda.is_available() else "cpu"
     if device_name.startswith("cuda") and not torch.cuda.is_available():
@@ -256,6 +270,10 @@ def train_classifier(
                     "recall_weight": recall_weight,
                     "selection_metric": selection_metric,
                     "augmentation": augmentation,
+                    "manifest": str(manifest),
+                    "split_id": split_id,
+                    "seed": seed,
+                    "validation_fraction": validation_fraction,
                     "validation_metrics": metrics,
                 },
                 output,
@@ -273,6 +291,10 @@ def train_classifier(
         "recall_weight": recall_weight,
         "selection_metric": selection_metric,
         "augmentation": augmentation,
+        "manifest": str(manifest),
+        "split_id": split_id,
+        "seed": seed,
+        "validation_fraction": validation_fraction,
         "tensorboard_logdir": str(tensorboard_logdir) if tensorboard_logdir else None,
         "train_samples": len(train_rows),
         "validation_samples": len(validation_rows),

@@ -41,8 +41,9 @@ frame.
 | `live.py` | Bounded capture queue, event-driven live classification, metrics, JSONL sink |
 | `dataset.py` | Manifest loading, source-grouped split, chirality-safe transforms |
 | `models.py` | TinyCNN, ResNet, MobileNet, ViT, Swin, ConvNeXt V2, and DINOv3 ConvNeXt factory |
-| `training.py` | Selectable CE/weighted-CE/recall-hybrid training, AMP/device controls, per-class metrics/checkpoints |
+| `training.py` | Selectable loss/augmentation, TensorBoard logging, AMP/device controls, per-class metrics/checkpoints |
 | `inference.py` | Shared preprocessing plus optional class-specific probability thresholding |
+| `analysis.py` | Architecture-neutral SmoothGrad and occlusion sensitivity overlays with JSON metadata |
 | `diagnostics.py` | Clean-frame ROI/trigger/mask/candidate calibration preview |
 | `cli.py` | Public offline, training, preview, and live commands |
 | `gui_commands.py` / `gui.py` | GUI-to-CLI construction and Tkinter process controls |

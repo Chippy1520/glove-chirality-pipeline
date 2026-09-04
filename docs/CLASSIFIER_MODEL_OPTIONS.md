@@ -42,6 +42,38 @@ glove-pipeline train \
 
 Pretrained Swin, ConvNeXt, and DINO models should be fine-tuned rather than trained from scratch on a modest glove dataset. Horizontal reflection remains prohibited unless the chirality label is transformed under an explicitly tested convention.
 
+## Shortcut-resistant experiments
+
+Training exposes three policies:
+
+- `none`: deterministic resize and normalization only;
+- `standard`: mild color jitter and rotation;
+- `anti_spurious`: stronger color/contrast variation, occasional grayscale and blur, plus small random erasures.
+
+`anti_spurious` is an ablation tool for suspected print, label, color, or local-texture shortcuts. It does not certify that the model uses the thumb or silhouette, and it may hurt performance if erasing removes true chirality evidence. Compare policies with identical source-grouped splits and seeds. Horizontal reflection is absent from every policy.
+
+Optional TensorBoard logging records training loss, accuracy, macro recall/F1, and left/right validation recall:
+
+```bash
+glove-pipeline train \
+  --manifest outputs/dataset/manifest.csv \
+  --output outputs/models/anti_spurious.pt \
+  --model convnextv2_pico \
+  --augmentation anti_spurious \
+  --tensorboard-logdir outputs/tensorboard/anti_spurious
+
+python -m tensorboard.main --logdir outputs/tensorboard --host 127.0.0.1
+```
+
+## Individual explanations
+
+`glove-pipeline explain` supports every classifier architecture through input-level methods:
+
+- `smoothgrad` for averaged gradient sensitivity;
+- `occlusion` for target-probability drops after hiding image patches.
+
+Each run writes an overlay and JSON metadata. Use them to formulate a shortcut hypothesis, then test that hypothesis with controlled masking or augmentation and locked held-out sessions. These maps are not transformer attention weights and are not causal explanations.
+
 ## Weight licenses
 
 Repository code is MIT licensed, but pretrained weights have separate terms:

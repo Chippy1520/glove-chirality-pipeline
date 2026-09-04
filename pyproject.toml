@@ -13,10 +13,10 @@ authors = [{name = "Chathuka Elapatha"}]
 dependencies = ["numpy>=1.24", "opencv-python>=4.8", "PyYAML>=6.0"]
 
 [project.optional-dependencies]
-ml = ["torch>=2.2", "torchvision>=0.17", "timm>=1.0.20"]
+ml = ["torch>=2.2", "torchvision>=0.17", "timm>=1.0.20", "tensorboard>=2.16"]
 yolo = ["ultralytics>=8.2"]
 dev = ["pytest>=8.0", "ruff>=0.5"]
-all = ["torch>=2.2", "torchvision>=0.17", "timm>=1.0.20", "ultralytics>=8.2", "pytest>=8.0", "ruff>=0.5"]
+all = ["torch>=2.2", "torchvision>=0.17", "timm>=1.0.20", "tensorboard>=2.16", "ultralytics>=8.2", "pytest>=8.0", "ruff>=0.5"]
 
 [project.scripts]
 glove-pipeline = "glove_chirality.cli:main"

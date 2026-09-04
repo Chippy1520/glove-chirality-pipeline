@@ -6,6 +6,47 @@ from collections import defaultdict
 from pathlib import Path
 
 CLASSES = ["left", "right"]
+AUGMENTATION_CHOICES = ("none", "standard", "anti_spurious")
+
+
+def build_image_transform(image_size: int, training: bool, augmentation: str = "standard"):
+    """Build the shared ImageNet transform without chirality-changing reflection."""
+    from torchvision import transforms
+
+    if augmentation not in AUGMENTATION_CHOICES:
+        raise ValueError(f"augmentation must be one of: {', '.join(AUGMENTATION_CHOICES)}")
+    before_tensor = []
+    after_tensor = []
+    if training and augmentation == "standard":
+        before_tensor = [
+            transforms.ColorJitter(brightness=0.15, contrast=0.15),
+            transforms.RandomRotation(7),
+        ]
+    elif training and augmentation == "anti_spurious":
+        before_tensor = [
+            transforms.ColorJitter(brightness=0.30, contrast=0.30, saturation=0.20),
+            transforms.RandomGrayscale(p=0.20),
+            transforms.RandomRotation(10),
+            transforms.RandomApply([transforms.GaussianBlur(3)], p=0.15),
+        ]
+        after_tensor = [
+            transforms.RandomErasing(
+                p=0.40,
+                scale=(0.01, 0.08),
+                ratio=(0.3, 3.3),
+                value="random",
+            )
+        ]
+    # Horizontal reflection is intentionally absent: it can change chirality semantics.
+    return transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            *before_tensor,
+            transforms.ToTensor(),
+            *after_tensor,
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ]
+    )
 
 
 def read_manifest(path: str | Path) -> list[dict[str, str]]:
@@ -40,19 +81,18 @@ def grouped_split(rows: list[dict[str, str]], validation_fraction: float, seed: 
 
 
 class ManifestDataset:
-    def __init__(self, rows, image_size: int, training: bool):
+    def __init__(
+        self,
+        rows,
+        image_size: int,
+        training: bool,
+        augmentation: str = "standard",
+    ):
         import cv2
         from PIL import Image
-        from torchvision import transforms
 
         self.cv2, self.Image, self.rows = cv2, Image, rows
-        augment = [transforms.ColorJitter(brightness=0.15, contrast=0.15), transforms.RandomRotation(7)] if training else []
-        # Intentionally no horizontal flip: reflection can change chirality semantics.
-        self.transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)), *augment,
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ])
+        self.transform = build_image_transform(image_size, training, augmentation)
 
     def __len__(self):
         return len(self.rows)

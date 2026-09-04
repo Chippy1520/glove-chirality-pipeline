@@ -55,34 +55,108 @@ def main(argv: list[str] | None = None) -> None:
             self.root = root
             self.process: subprocess.Popen[str] | None = None
             self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
-            self.root.title("Glove Chirality Pipeline")
-            self.root.geometry("1180x900")
-            self.root.minsize(980, 760)
+            self.root.title("GRIP · Glove Chirality Workstation")
+            self.root.geometry("1280x920")
+            self.root.minsize(1040, 760)
+            self.root.configure(background="#f4f7fb")
             self._style(ttk)
 
             default_config = Path("configs/default.yaml")
             self.config_path = tk.StringVar(
                 value=str(default_config.resolve()) if default_config.exists() else ""
             )
+            header = ttk.Frame(root, style="Header.TFrame", padding=(20, 14))
+            header.pack(fill="x")
+            ttk.Label(header, text="GRIP", style="Brand.TLabel").pack(side="left")
+            heading = ttk.Frame(header, style="Header.TFrame")
+            heading.pack(side="left", padx=(14, 0))
+            ttk.Label(
+                heading,
+                text="Glove chirality workstation",
+                style="HeaderTitle.TLabel",
+            ).pack(anchor="w")
+            ttk.Label(
+                heading,
+                text="Layer 1 segmentation  →  passage extraction  →  Layer 2 classification",
+                style="HeaderSub.TLabel",
+            ).pack(anchor="w")
             self.notebook = ttk.Notebook(root)
             self.notebook.pack(fill="both", expand=True, padx=12, pady=(12, 6))
             self._extraction_tab(tk, ttk, filedialog, messagebox)
             self._settings_tab(tk, ttk, filedialog, messagebox)
             self._training_tab(tk, ttk, filedialog, messagebox)
             self._inference_tab(tk, ttk, filedialog, messagebox)
+            self._analysis_tab(tk, ttk, filedialog, messagebox)
             self._log_panel(tk, ttk, scrolledtext)
             self.root.after(100, self._drain_messages)
 
         @staticmethod
         def _style(ttk_module) -> None:
             style = ttk_module.Style()
-            for theme in ("vista", "clam"):
-                if theme in style.theme_names():
-                    style.theme_use(theme)
-                    break
-            style.configure("Title.TLabel", font=("Segoe UI", 14, "bold"))
-            style.configure("Section.TLabelframe.Label", font=("Segoe UI", 10, "bold"))
-            style.configure("Run.TButton", font=("Segoe UI", 10, "bold"))
+            if "clam" in style.theme_names():
+                style.theme_use("clam")
+            background = "#f4f7fb"
+            surface = "#ffffff"
+            ink = "#172033"
+            muted = "#667085"
+            primary = "#2563eb"
+            style.configure(".", font=("Segoe UI", 9), background=background, foreground=ink)
+            style.configure("TFrame", background=background)
+            style.configure("Header.TFrame", background="#172033")
+            style.configure(
+                "Brand.TLabel",
+                background="#2563eb",
+                foreground="#ffffff",
+                font=("Segoe UI", 15, "bold"),
+                padding=(12, 7),
+            )
+            style.configure(
+                "HeaderTitle.TLabel",
+                background="#172033",
+                foreground="#ffffff",
+                font=("Segoe UI", 15, "bold"),
+            )
+            style.configure(
+                "HeaderSub.TLabel",
+                background="#172033",
+                foreground="#cbd5e1",
+                font=("Segoe UI", 9),
+            )
+            style.configure("Title.TLabel", font=("Segoe UI", 15, "bold"), foreground=ink)
+            style.configure(
+                "Section.TLabelframe",
+                background=background,
+                bordercolor="#d8e0ec",
+                relief="solid",
+            )
+            style.configure(
+                "Section.TLabelframe.Label",
+                background=background,
+                foreground=ink,
+                font=("Segoe UI", 10, "bold"),
+            )
+            style.configure("Run.TButton", font=("Segoe UI", 9, "bold"), foreground="#ffffff")
+            style.map(
+                "Run.TButton",
+                background=[("active", "#1d4ed8"), ("!disabled", primary)],
+                foreground=[("!disabled", "#ffffff")],
+            )
+            style.configure("TNotebook", background=background, borderwidth=0)
+            style.configure(
+                "TNotebook.Tab",
+                padding=(14, 8),
+                font=("Segoe UI", 9, "bold"),
+                background="#e8edf5",
+                foreground=muted,
+            )
+            style.map(
+                "TNotebook.Tab",
+                background=[("selected", surface), ("active", "#dce6f7")],
+                foreground=[("selected", primary)],
+            )
+            style.configure("TEntry", fieldbackground=surface, padding=4)
+            style.configure("TCombobox", fieldbackground=surface, padding=4)
+            style.configure("TButton", padding=(10, 6))
 
         @staticmethod
         def _entry(parent, ttk_module, row, label, variable, width=72, secret=False):
@@ -156,7 +230,7 @@ def main(argv: list[str] | None = None) -> None:
 
         def _extraction_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
             tab = ttk_module.Frame(self.notebook, padding=10)
-            self.notebook.add(tab, text="Extract")
+            self.notebook.add(tab, text="1 · Extract")
             ttk_module.Label(tab, text="Video → representative glove crops", style="Title.TLabel").pack(anchor="w", pady=(0, 8))
 
             dataset = ttk_module.LabelFrame(tab, text="Labeled dataset from known streams", style="Section.TLabelframe", padding=8)
@@ -191,7 +265,7 @@ def main(argv: list[str] | None = None) -> None:
 
         def _settings_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
             tab = ttk_module.Frame(self.notebook, padding=10)
-            self.notebook.add(tab, text="Extraction settings")
+            self.notebook.add(tab, text="2 · Layer 1")
             ttk_module.Label(tab, text="Layer 1 detector, event selection, and crop settings", style="Title.TLabel").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
             self._path_row(tab, ttk_module, filedialog_module, 1, "Config file", self.config_path, "yaml")
 
@@ -235,7 +309,7 @@ def main(argv: list[str] | None = None) -> None:
             detector.grid(row=2, column=0, sticky="nsew", padx=(0, 5), pady=5)
             event = ttk_module.LabelFrame(tab, text="Passage and crop", style="Section.TLabelframe", padding=8)
             event.grid(row=2, column=1, sticky="nsew", padx=5, pady=5)
-            yolo = ttk_module.LabelFrame(tab, text="Layer 1 — custom YOLO segmentation", style="Section.TLabelframe", padding=8)
+            yolo = ttk_module.LabelFrame(tab, text="Layer 1 — YOLO11n-seg glove model", style="Section.TLabelframe", padding=8)
             yolo.grid(row=2, column=2, sticky="nsew", padx=(5, 0), pady=5)
             tab.columnconfigure((0, 1, 2), weight=1)
 
@@ -314,7 +388,7 @@ def main(argv: list[str] | None = None) -> None:
                 ttk_module,
                 filedialog_module,
                 0,
-                "Custom model",
+                "YOLO11n-seg checkpoint",
                 self.setting_vars["yolo_model"],
                 "detector-model",
                 on_selected=apply_custom_yolo,
@@ -341,7 +415,7 @@ def main(argv: list[str] | None = None) -> None:
             preset_row = len(yolo_labels) + 5
             ttk_module.Button(
                 yolo,
-                text="Apply as custom Layer 1 model",
+                text="Activate YOLO11n-seg as Layer 1",
                 command=apply_custom_yolo,
             ).grid(row=preset_row, column=0, columnspan=3, sticky="ew", padx=6, pady=(8, 4))
             ttk_module.Label(
@@ -371,7 +445,7 @@ def main(argv: list[str] | None = None) -> None:
 
         def _training_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
             tab = ttk_module.Frame(self.notebook, padding=10)
-            self.notebook.add(tab, text="Train")
+            self.notebook.add(tab, text="3 · Train")
             ttk_module.Label(tab, text="Train an interchangeable chirality classifier", style="Title.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
             self.train_manifest, self.train_output = tk_module.StringVar(), tk_module.StringVar()
             self.train_model = tk_module.StringVar(value="resnet18")
@@ -384,8 +458,20 @@ def main(argv: list[str] | None = None) -> None:
             self.train_recall_target = tk_module.StringVar(value="right")
             self.train_recall_weight = tk_module.DoubleVar(value=1.0)
             self.train_selection_metric = tk_module.StringVar(value="macro_recall")
+            self.train_augmentation = tk_module.StringVar(value="standard")
+            self.train_tensorboard = tk_module.StringVar()
+            self.train_tensorboard_port = tk_module.IntVar(value=6006)
             self._path_row(tab, ttk_module, filedialog_module, 1, "Dataset manifest", self.train_manifest, "csv")
             self._path_row(tab, ttk_module, filedialog_module, 2, "Checkpoint output", self.train_output, "save-model")
+            self._path_row(
+                tab,
+                ttk_module,
+                filedialog_module,
+                3,
+                "TensorBoard log directory (optional)",
+                self.train_tensorboard,
+                "directory",
+            )
             fields = [
                 ("Model", self.train_model, CLASSIFIER_CHOICES),
                 ("Device", self.train_device, ("auto", "cpu", "cuda", "cuda:0", "cuda:1")),
@@ -397,19 +483,66 @@ def main(argv: list[str] | None = None) -> None:
                 ("Recall target", self.train_recall_target, ("left", "right")),
                 ("Recall penalty weight", self.train_recall_weight, None),
                 ("Best-checkpoint metric", self.train_selection_metric, ("accuracy", "macro_recall", "macro_f1", "recall_left", "recall_right")),
+                ("Augmentation", self.train_augmentation, ("none", "standard", "anti_spurious")),
+                ("TensorBoard port", self.train_tensorboard_port, None),
             ]
             for index, (label, variable, values) in enumerate(fields):
-                row, column = 3 + index // 2, (index % 2) * 2
+                row, column = 4 + index // 2, (index % 2) * 2
                 ttk_module.Label(tab, text=label).grid(row=row, column=column, sticky="w", padx=8, pady=6)
                 widget = ttk_module.Combobox(tab, textvariable=variable, values=values, width=22) if values else ttk_module.Entry(tab, textvariable=variable, width=24)
                 widget.grid(row=row, column=column + 1, sticky="w", padx=8, pady=6)
-            final_field_row = 3 + (len(fields) - 1) // 2
+            final_field_row = 4 + (len(fields) - 1) // 2
             ttk_module.Checkbutton(tab, text="CUDA mixed precision (AMP)", variable=self.train_amp).grid(row=final_field_row + 1, column=0, columnspan=2, sticky="w", padx=8, pady=8)
-            ttk_module.Button(tab, text="Start training", style="Run.TButton", command=lambda: self._guard(messagebox_module, lambda: gui_commands.train(self.train_manifest.get(), self.train_output.get(), self.train_model.get(), self.train_epochs.get(), self.train_batch.get(), self.train_size.get(), self.train_lr.get(), self.train_val.get(), self.train_seed.get(), self.train_device.get(), self.train_workers.get(), self.train_amp.get(), self.train_loss.get(), self.train_recall_target.get(), self.train_recall_weight.get(), self.train_selection_metric.get()))).grid(row=final_field_row + 2, column=2, columnspan=2, sticky="e", padx=8, pady=12)
+            ttk_module.Label(
+                tab,
+                text="Anti-spurious augmentation suppresses color/texture shortcuts with grayscale, blur, and small random erasures. It never mirrors chirality.",
+                wraplength=700,
+                foreground="#475467",
+            ).grid(row=final_field_row + 2, column=0, columnspan=4, sticky="w", padx=8, pady=5)
+            actions = ttk_module.Frame(tab)
+            actions.grid(row=final_field_row + 3, column=0, columnspan=4, sticky="e", pady=10)
+            ttk_module.Button(
+                actions,
+                text="Open TensorBoard",
+                command=lambda: self._guard(
+                    messagebox_module,
+                    lambda: gui_commands.tensorboard(
+                        self.train_tensorboard.get(), self.train_tensorboard_port.get()
+                    ),
+                ),
+            ).pack(side="left", padx=5)
+            ttk_module.Button(
+                actions,
+                text="Start training",
+                style="Run.TButton",
+                command=lambda: self._guard(
+                    messagebox_module,
+                    lambda: gui_commands.train(
+                        self.train_manifest.get(),
+                        self.train_output.get(),
+                        self.train_model.get(),
+                        self.train_epochs.get(),
+                        self.train_batch.get(),
+                        self.train_size.get(),
+                        self.train_lr.get(),
+                        self.train_val.get(),
+                        self.train_seed.get(),
+                        self.train_device.get(),
+                        self.train_workers.get(),
+                        self.train_amp.get(),
+                        self.train_loss.get(),
+                        self.train_recall_target.get(),
+                        self.train_recall_weight.get(),
+                        self.train_selection_metric.get(),
+                        self.train_augmentation.get(),
+                        self.train_tensorboard.get(),
+                    ),
+                ),
+            ).pack(side="left", padx=5)
 
         def _inference_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
             tab = ttk_module.Frame(self.notebook, padding=10)
-            self.notebook.add(tab, text="Inference")
+            self.notebook.add(tab, text="4 · Infer")
             ttk_module.Label(tab, text="Layer 2 — classify each accepted glove crop", style="Title.TLabel").pack(anchor="w", pady=(0, 8))
             self.infer_checkpoint, self.infer_device = tk_module.StringVar(), tk_module.StringVar(value="auto")
             self.infer_decision_class = tk_module.StringVar(value="argmax")
@@ -451,6 +584,119 @@ def main(argv: list[str] | None = None) -> None:
             self._path_row(images, ttk_module, filedialog_module, 0, "Crop/image input", self.infer_images_input, "image-or-directory")
             self._path_row(images, ttk_module, filedialog_module, 1, "Prediction CSV", self.infer_images_output, "save-csv")
             ttk_module.Button(images, text="Classify images", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_images(self.infer_images_input.get(), self.infer_checkpoint.get(), self.infer_images_output.get(), self.infer_device.get(), self.infer_decision_class.get(), self.infer_decision_threshold.get()))).grid(row=2, column=1, sticky="e", padx=8, pady=8)
+
+        def _analysis_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
+            tab = ttk_module.Frame(self.notebook, padding=14)
+            self.notebook.add(tab, text="5 · Explain")
+            ttk_module.Label(
+                tab,
+                text="Inspect individual classifier decisions",
+                style="Title.TLabel",
+            ).pack(anchor="w", pady=(0, 4))
+            ttk_module.Label(
+                tab,
+                text=(
+                    "Generate a class-sensitivity overlay for a false classification or any "
+                    "accepted crop. Use several samples before changing the training policy."
+                ),
+                foreground="#475467",
+            ).pack(anchor="w", pady=(0, 12))
+
+            panel = ttk_module.LabelFrame(
+                tab,
+                text="Feature sensitivity map",
+                style="Section.TLabelframe",
+                padding=12,
+            )
+            panel.pack(fill="x")
+            self.explain_image = tk_module.StringVar()
+            self.explain_checkpoint = tk_module.StringVar()
+            self.explain_output = tk_module.StringVar()
+            self.explain_device = tk_module.StringVar(value="auto")
+            self.explain_method = tk_module.StringVar(value="smoothgrad")
+            self.explain_target = tk_module.StringVar(value="predicted")
+            self._path_row(
+                panel,
+                ttk_module,
+                filedialog_module,
+                0,
+                "Glove crop",
+                self.explain_image,
+                "image-or-directory",
+            )
+            self._path_row(
+                panel,
+                ttk_module,
+                filedialog_module,
+                1,
+                "Classifier checkpoint",
+                self.explain_checkpoint,
+                "model",
+            )
+            self._path_row(
+                panel,
+                ttk_module,
+                filedialog_module,
+                2,
+                "Overlay output",
+                self.explain_output,
+                "save-image",
+            )
+            ttk_module.Label(panel, text="Method").grid(
+                row=3, column=0, sticky="w", padx=8, pady=6
+            )
+            ttk_module.Combobox(
+                panel,
+                textvariable=self.explain_method,
+                values=("smoothgrad", "occlusion"),
+                state="readonly",
+                width=18,
+            ).grid(row=3, column=1, sticky="w", padx=8, pady=6)
+            ttk_module.Label(panel, text="Explain class").grid(
+                row=4, column=0, sticky="w", padx=8, pady=6
+            )
+            ttk_module.Combobox(
+                panel,
+                textvariable=self.explain_target,
+                values=("predicted", "left", "right"),
+                state="readonly",
+                width=18,
+            ).grid(row=4, column=1, sticky="w", padx=8, pady=6)
+            ttk_module.Label(panel, text="Device").grid(
+                row=5, column=0, sticky="w", padx=8, pady=6
+            )
+            ttk_module.Combobox(
+                panel,
+                textvariable=self.explain_device,
+                values=("auto", "cpu", "cuda", "cuda:0", "cuda:1"),
+                width=18,
+            ).grid(row=5, column=1, sticky="w", padx=8, pady=6)
+            ttk_module.Button(
+                panel,
+                text="Generate explanation",
+                style="Run.TButton",
+                command=lambda: self._guard(
+                    messagebox_module,
+                    lambda: gui_commands.explain(
+                        self.explain_image.get(),
+                        self.explain_checkpoint.get(),
+                        self.explain_output.get(),
+                        self.explain_device.get(),
+                        self.explain_method.get(),
+                        self.explain_target.get(),
+                    ),
+                ),
+            ).grid(row=6, column=1, sticky="e", padx=8, pady=10)
+            ttk_module.Label(
+                panel,
+                text=(
+                    "SmoothGrad is faster. Occlusion is slower but directly measures the class-score "
+                    "drop when image regions are hidden. Heatmaps are diagnostic sensitivity evidence, "
+                    "not proof of a causal feature."
+                ),
+                wraplength=850,
+                foreground="#7a4e20",
+            ).grid(row=7, column=0, columnspan=3, sticky="w", padx=8, pady=(4, 8))
 
         def _log_panel(self, tk_module, ttk_module, scrolledtext_module):
             tab = ttk_module.Frame(self.notebook, padding=10)

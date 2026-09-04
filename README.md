@@ -14,7 +14,7 @@ Launch the Tkinter interface after installation:
 glove-pipeline-gui
 ```
 
-It provides file/directory pickers, common extraction-setting editing with YAML load/save, calibration preview, labeled/unlabeled extraction, model/GPU training controls, image/video inference, live logs, and process stopping. It calls the same CLI backend, so GUI and scripted runs remain reproducible. See [`docs/GUI.md`](docs/GUI.md).
+It provides explicit Layer-1 YOLO11n-seg checkpoint/configuration controls, extraction and calibration workflows, Layer-2 model/GPU training, optional TensorBoard logging, chirality-safe anti-spurious augmentation, image/video/live inference, per-image explanation maps, and live process logs. It calls the same CLI backend, so GUI and scripted runs remain reproducible. See [`docs/GUI.md`](docs/GUI.md).
 
 ## Pipeline
 
@@ -54,7 +54,8 @@ Offline extraction, offline video inference, and live inference all use the same
 - Optional separate polygon JSON files via `event.save_masks`; ordinary CSV files never embed large polygons.
 - Fixed-size, aspect-preserving crop export (`256x256` by default) shared by dataset, offline inference, and live inference.
 - Grouped train/validation split by source video to prevent adjacent-event leakage.
-- Interchangeable `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, and `vit_b_16` classifiers.
+- Interchangeable `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, `vit_b_16`, `swin_t`, `convnextv2_pico`, and `dinov3_convnext_tiny` classifiers.
+- Optional TensorBoard metrics, `none`/`standard`/`anti_spurious` augmentation policies, and per-image SmoothGrad or occlusion-sensitivity explanation overlays.
 - Image inference and full video-to-event-to-prediction deployment commands.
 - `infer-live` with bounded latest-frame capture, stale-frame dropping, model warm-up, rolling performance metrics, and JSONL event output; classification runs once per accepted passage.
 - Synthetic-video integration test because real recordings are not in this repository.

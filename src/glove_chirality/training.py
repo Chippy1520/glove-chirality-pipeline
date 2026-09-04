@@ -4,7 +4,13 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from glove_chirality.dataset import CLASSES, ManifestDataset, grouped_split, read_manifest
+from glove_chirality.dataset import (
+    AUGMENTATION_CHOICES,
+    CLASSES,
+    ManifestDataset,
+    grouped_split,
+    read_manifest,
+)
 from glove_chirality.models import build_model, model_backend
 
 LOSS_CHOICES = ("cross_entropy", "weighted_cross_entropy", "recall_hybrid")
@@ -106,6 +112,8 @@ def train_classifier(
     recall_target: str = "right",
     recall_weight: float = 1.0,
     selection_metric: str = "macro_recall",
+    augmentation: str = "standard",
+    tensorboard_logdir: str | Path | None = None,
 ) -> dict[str, object]:
     try:
         import torch
@@ -118,6 +126,8 @@ def train_classifier(
         raise ValueError(f"recall_target must be one of: {', '.join(CLASSES)}")
     if selection_metric not in SELECTION_METRICS:
         raise ValueError(f"selection_metric must be one of: {', '.join(SELECTION_METRICS)}")
+    if augmentation not in AUGMENTATION_CHOICES:
+        raise ValueError(f"augmentation must be one of: {', '.join(AUGMENTATION_CHOICES)}")
     rows = read_manifest(manifest)
     train_rows, validation_rows = grouped_split(rows, validation_fraction, seed)
     if device_name == "auto":
@@ -132,7 +142,9 @@ def train_classifier(
         "persistent_workers": workers > 0,
     }
     train_loader = DataLoader(
-        ManifestDataset(train_rows, image_size, True), shuffle=True, **loader_options
+        ManifestDataset(train_rows, image_size, True, augmentation),
+        shuffle=True,
+        **loader_options,
     )
     validation_loader = DataLoader(
         ManifestDataset(validation_rows, image_size, False), **loader_options
@@ -162,15 +174,40 @@ def train_classifier(
     best_metrics: dict[str, object] = {}
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    writer = None
+    if tensorboard_logdir:
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+        except ImportError as exc:
+            raise RuntimeError("TensorBoard logging requires: pip install -e .[ml]") from exc
+        writer = SummaryWriter(log_dir=str(tensorboard_logdir))
+        writer.add_text(
+            "run/config",
+            json.dumps(
+                {
+                    "model": model_name,
+                    "augmentation": augmentation,
+                    "loss": loss_name,
+                    "selection_metric": selection_metric,
+                    "image_size": image_size,
+                },
+                indent=2,
+            ),
+        )
 
     for epoch in range(epochs):
         model.train()
+        epoch_loss = 0.0
+        batch_count = 0
         for images, targets in train_loader:
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
             optimizer.zero_grad()
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
                 loss = loss_fn(model(images), targets)
+            if writer is not None:
+                epoch_loss += float(loss.detach().cpu())
+                batch_count += 1
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -184,6 +221,17 @@ def train_classifier(
                 predictions_all.extend(predictions.tolist())
                 targets_all.extend(targets.tolist())
         metrics = classification_metrics(targets_all, predictions_all, len(CLASSES))
+        if writer is not None:
+            writer.add_scalar("loss/train", epoch_loss / max(batch_count, 1), epoch + 1)
+            writer.add_scalar("validation/accuracy", metrics["accuracy"], epoch + 1)
+            writer.add_scalar("validation/macro_recall", metrics["macro_recall"], epoch + 1)
+            writer.add_scalar("validation/macro_f1", metrics["macro_f1"], epoch + 1)
+            for index, label in enumerate(CLASSES):
+                writer.add_scalar(
+                    f"validation/recall_{label}",
+                    metrics["recall_per_class"][index],
+                    epoch + 1,
+                )
         print(
             f"epoch={epoch + 1}/{epochs} "
             f"val_accuracy={metrics['accuracy']:.4f} "
@@ -207,11 +255,14 @@ def train_classifier(
                     "recall_target": recall_target,
                     "recall_weight": recall_weight,
                     "selection_metric": selection_metric,
+                    "augmentation": augmentation,
                     "validation_metrics": metrics,
                 },
                 output,
             )
 
+    if writer is not None:
+        writer.close()
     summary = {
         "model": model_name,
         "device": str(device),
@@ -221,6 +272,8 @@ def train_classifier(
         "recall_target": recall_target,
         "recall_weight": recall_weight,
         "selection_metric": selection_metric,
+        "augmentation": augmentation,
+        "tensorboard_logdir": str(tensorboard_logdir) if tensorboard_logdir else None,
         "train_samples": len(train_rows),
         "validation_samples": len(validation_rows),
         "best_validation": best_metrics,

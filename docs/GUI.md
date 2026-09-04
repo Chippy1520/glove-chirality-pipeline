@@ -28,7 +28,7 @@ Tkinter ships with standard Windows Python installations, so no web server or ad
 - Render a calibration preview at a selected timestamp.
 - Select the output directory and extraction YAML with native file dialogs.
 
-### Extraction settings
+### 2 · Layer 1
 
 Edit the most frequently calibrated parameters:
 
@@ -56,8 +56,8 @@ The detector checkpoint and chirality-classifier checkpoint are separate:
 
 To configure Layer 1 without hand-editing YAML:
 
-1. Open **Extraction settings**.
-2. Under **Layer 1 — custom YOLO segmentation**, click **Browse…** and choose the exported checkpoint, normally `best.pt`.
+1. Open **2 · Layer 1**.
+2. Under **Layer 1 — YOLO11n-seg glove model**, click **Browse…** and choose the trained segmentation checkpoint, normally `best.pt`.
 3. The GUI automatically selects the `yolo` backend, sets glove class ID `0`, enables masks, requires segmentation output, and enables ROI-only inference.
 4. If the annotation platform assigned glove a different class index, change **Glove class ID** to match its dataset class list.
 5. Choose the YOLO device (`auto`, `cpu`, `cuda`, or `cuda:0`) and save the configuration, preferably with **Save as…**.
@@ -77,20 +77,26 @@ Click **Use tight detection bbox** under **Passage and crop** to set:
 
 This uses each selected mask-derived bbox as a variable-width/height source crop. It does **not** stretch the crop: aspect-preserving letterboxing still produces the classifier's fixed output dimensions. If a neighboring glove overlaps the rectangle, try `masked` or `masked_fill`, which suppresses pixels outside the selected instance polygon. The pipeline still rejects multiple eligible gloves by default rather than assigning an arbitrary passage.
 
-### Train
+### 3 · Train
 
 Choose the manifest, checkpoint path, model, epochs, batch/image size, learning rate, grouped validation fraction, seed, device, AMP, and DataLoader workers. The Layer-2 controls also expose:
 
 - `cross_entropy`, `weighted_cross_entropy`, or experimental `recall_hybrid` loss;
 - the recall target (`right` for the current safety objective);
 - recall-penalty weight; and
-- the validation metric used to retain the best checkpoint (`recall_right` when missed right gloves are the costly error).
+- the validation metric used to retain the best checkpoint (`recall_right` when missed right gloves are the costly error);
+- `none`, `standard`, or `anti_spurious` chirality-safe augmentation; and
+- an optional TensorBoard log directory and local dashboard launcher.
 
 For the right-glove-recall experiment, start with `recall_hybrid`, target `right`, penalty weight `1.0`, and selection metric `recall_right`. Compare it against the weighted-cross-entropy baseline on the identical locked source/session split rather than assuming the custom loss is better.
 
 For an NVIDIA GPU, first install the CUDA-enabled PyTorch build matching the laptop, then use `cuda` or `cuda:N` and optionally enable AMP.
 
-### Inference
+`anti_spurious` strengthens color/contrast changes, occasionally removes color, applies mild blur, and erases small random regions. It is intended for controlled retraining when explanations suggest texture, print, or label shortcuts. It never reflects an image. Compare it against `standard` on the identical split; do not assume stronger augmentation is automatically better.
+
+When a TensorBoard directory is set, training records loss, accuracy, macro recall/F1, and per-class recall. After events exist, click **Open TensorBoard**. The server binds only to `127.0.0.1` and can be stopped from **Run log**.
+
+### 4 · Infer
 
 - Run the shared extractor and classifier on a full video.
 - Start/stop event-driven live inference from a camera index or OpenCV stream source.
@@ -102,6 +108,26 @@ For an NVIDIA GPU, first install the CUDA-enabled PyTorch build matching the lap
 The threshold must be selected on held-out source sessions. Do not claim zero missed right gloves from training metrics alone, and remember that this Layer-2 threshold cannot compensate for Layer-1 extraction misses.
 
 Live mode still delegates to `glove-pipeline infer-live`; the GUI contains no camera tracker or crop implementation of its own.
+
+### 5 · Explain
+
+Select one accepted crop, a Layer-2 checkpoint, output image, target class, and method:
+
+- `smoothgrad` averages input-gradient sensitivity over noisy copies and is the faster first check;
+- `occlusion` hides patches and highlights regions whose removal lowers the target-class probability. It is slower but often easier to reason about.
+
+The command writes a color overlay and adjacent JSON containing class probabilities, target class, method, and paths. Compare correct and incorrect examples from multiple held-out sessions. A bright region is diagnostic sensitivity evidence, not causal proof that the model uses a semantic glove feature. Explanations do not replace ablation tests—for example, retraining with `anti_spurious` and measuring the locked test set.
+
+CLI equivalent:
+
+```bash
+glove-pipeline explain \
+  --image outputs/dataset/images/right/example.jpg \
+  --checkpoint outputs/models/classifier.pt \
+  --output outputs/explanations/example.png \
+  --method occlusion \
+  --target-class right
+```
 
 ## Execution behavior
 

@@ -23,6 +23,31 @@ def test_training_gpu_and_recall_options_parse():
     assert args.selection_metric == "recall_right"
 
 
+def test_training_analysis_options_parse():
+    args = build_parser().parse_args([
+        "train",
+        "--manifest", "manifest.csv",
+        "--output", "model.pt",
+        "--augmentation", "anti_spurious",
+        "--tensorboard-logdir", "runs/experiment-1",
+    ])
+    assert args.augmentation == "anti_spurious"
+    assert args.tensorboard_logdir == "runs/experiment-1"
+
+
+def test_explanation_options_parse():
+    args = build_parser().parse_args([
+        "explain",
+        "--image", "crop.png",
+        "--checkpoint", "model.pt",
+        "--output", "overlay.png",
+        "--method", "occlusion",
+        "--target-class", "right",
+    ])
+    assert args.method == "occlusion"
+    assert args.target_class == "right"
+
+
 def test_inference_recall_threshold_options_parse():
     args = build_parser().parse_args([
         "infer-video",

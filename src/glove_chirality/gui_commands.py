@@ -55,6 +55,8 @@ def train(
     recall_target: str = "right",
     recall_weight: float = 1.0,
     selection_metric: str = "macro_recall",
+    augmentation: str = "standard",
+    tensorboard_logdir: str = "",
 ) -> list[str]:
     _required(manifest=manifest, output=output)
     command = _base() + [
@@ -67,10 +69,45 @@ def train(
         "--loss", loss, "--recall-target", recall_target,
         "--recall-weight", str(recall_weight),
         "--selection-metric", selection_metric,
+        "--augmentation", augmentation,
     ]
+    if tensorboard_logdir.strip():
+        command.extend(["--tensorboard-logdir", tensorboard_logdir])
     if amp:
         command.append("--amp")
     return command
+
+
+def explain(
+    image: str,
+    checkpoint: str,
+    output: str,
+    device: str,
+    method: str = "smoothgrad",
+    target_class: str = "predicted",
+) -> list[str]:
+    _required(image=image, checkpoint=checkpoint, output=output)
+    return _base() + [
+        "explain",
+        "--image", image,
+        "--checkpoint", checkpoint,
+        "--output", output,
+        "--device", device,
+        "--method", method,
+        "--target-class", target_class,
+    ]
+
+
+def tensorboard(logdir: str, port: int = 6006) -> list[str]:
+    _required(logdir=logdir)
+    return [
+        sys.executable,
+        "-m",
+        "tensorboard.main",
+        "--logdir", logdir,
+        "--host", "127.0.0.1",
+        "--port", str(port),
+    ]
 
 
 def infer_video(

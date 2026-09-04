@@ -45,8 +45,8 @@ For an NVIDIA GPU, install the PyTorch build matching the machine's CUDA driver 
 - Color-agnostic Lab belt-foreground detector, legacy dark-contour fallback, and optional custom Ultralytics YOLO adapter.
 - Shared passage extractor for dataset and deployment modes.
 - TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16, Swin-T, ConvNeXt V2 Pico, and DINOv3 ConvNeXt-Tiny adapters.
-- Explicit `auto/cpu/cuda/cuda:N` controls, CUDA AMP, and DataLoader workers.
-- Lightweight Tkinter GUI that delegates all operations to the public CLI.
+- Explicit `auto/cpu/cuda/cuda:N` controls, CUDA AMP, DataLoader workers, TensorBoard logging, and chirality-safe augmentation policies.
+- Lightweight modern Tkinter GUI that delegates all operations to the public CLI and includes individual-decision explanation maps.
 - Grouped splitting, class-weighted loss, balanced metrics, synthetic integration fixtures, and CI.
 - No real recordings or trained production weights are in this repository.
 

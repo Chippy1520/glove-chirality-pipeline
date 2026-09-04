@@ -27,6 +27,42 @@ def test_train_command_includes_gpu_controls():
     assert command[command.index("--workers") + 1] == "4"
     assert command[command.index("--loss") + 1] == "weighted_cross_entropy"
     assert command[command.index("--selection-metric") + 1] == "macro_recall"
+    assert command[command.index("--augmentation") + 1] == "standard"
+
+
+def test_train_command_includes_analysis_controls():
+    command = gui_commands.train(
+        "manifest.csv",
+        "model.pt",
+        "convnextv2_pico",
+        20,
+        32,
+        224,
+        0.001,
+        0.2,
+        42,
+        "cuda",
+        4,
+        True,
+        augmentation="anti_spurious",
+        tensorboard_logdir="runs/experiment-1",
+    )
+    assert command[command.index("--augmentation") + 1] == "anti_spurious"
+    assert command[command.index("--tensorboard-logdir") + 1] == "runs/experiment-1"
+
+
+def test_explanation_and_tensorboard_commands_are_local():
+    explain = gui_commands.explain(
+        "crop.png", "model.pt", "overlay.png", "cpu", "occlusion", "right"
+    )
+    assert explain[3] == "explain"
+    assert explain[explain.index("--method") + 1] == "occlusion"
+    assert explain[explain.index("--target-class") + 1] == "right"
+
+    board = gui_commands.tensorboard("runs/experiment-1", 6010)
+    assert board[2] == "tensorboard.main"
+    assert board[board.index("--host") + 1] == "127.0.0.1"
+    assert board[board.index("--port") + 1] == "6010"
 
 
 def test_preview_command_includes_detector_warmup():

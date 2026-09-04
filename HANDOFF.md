@@ -38,11 +38,12 @@ Expected data inventory, not stored here:
 - Integer camera sources use verified-frame Windows backend fallback (DirectShow, MSMF, then default) and report the successful stream geometry.
 - Bounded-queue `infer-live` with stale-frame dropping, one classifier call per accepted passage, JSONL output, model warm-up, and rolling runtime metrics.
 - Model factory: TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16, Swin-T, ConvNeXt V2 Pico, and DINOv3 ConvNeXt-Tiny. See `docs/CLASSIFIER_MODEL_OPTIONS.md` for roles and pretrained-weight licenses.
-- Source-video-grouped validation split and selectable cross-entropy, weighted-cross-entropy, or recall-hybrid training.
+- Source-video-grouped validation split, selectable loss, and `none`/`standard`/`anti_spurious` chirality-safe augmentation.
+- Optional TensorBoard logging plus architecture-neutral SmoothGrad and occlusion sensitivity overlays for individual classifier decisions.
 - Accuracy, macro recall/balanced accuracy, per-class precision/recall, macro-F1, and confusion matrix output; checkpoints can be selected by right recall.
 - Optional right-class inference threshold shared by image, offline-video, and live modes for the explicit recall/precision trade-off.
 - Explicit CPU/GPU selection, CUDA mixed precision, and loader worker controls.
-- Lightweight Tkinter GUI for paths, common YAML settings, extraction, training, and inference.
+- Modern lightweight Tkinter workstation for Layer 1 configuration, extraction, Layer 2 training/inference, TensorBoard, explanations, and run logs.
 - Synthetic MJPEG integration test and GitHub Actions CI.
 
 ## What is not complete

@@ -7,7 +7,9 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from glove_chirality.analysis import EXPLANATION_METHODS
 from glove_chirality.config import ExtractionConfig
+from glove_chirality.dataset import AUGMENTATION_CHOICES
 from glove_chirality.extraction import (
     config_hash,
     discover_videos,
@@ -127,6 +129,17 @@ def build_parser():
         default="macro_recall",
         help="Validation metric used to retain the best checkpoint",
     )
+    train.add_argument(
+        "--augmentation",
+        choices=AUGMENTATION_CHOICES,
+        default="standard",
+        help="Chirality-safe training augmentation policy (never reflects images)",
+    )
+    train.add_argument(
+        "--tensorboard-logdir",
+        default="",
+        help="Optional TensorBoard event directory",
+    )
 
     images = sub.add_parser("infer-images", help="Classify a crop or crop directory")
     images.add_argument("--input", required=True)
@@ -134,6 +147,26 @@ def build_parser():
     images.add_argument("--output", required=True)
     images.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
     _add_decision_arguments(images)
+
+    explain = sub.add_parser(
+        "explain",
+        help="Generate a per-image classifier sensitivity overlay",
+    )
+    explain.add_argument("--image", required=True)
+    explain.add_argument("--checkpoint", required=True)
+    explain.add_argument("--output", required=True)
+    explain.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
+    explain.add_argument("--method", choices=EXPLANATION_METHODS, default="smoothgrad")
+    explain.add_argument(
+        "--target-class",
+        choices=["predicted", "left", "right"],
+        default="predicted",
+    )
+    explain.add_argument("--samples", type=int, default=16)
+    explain.add_argument("--noise-std", type=float, default=0.10)
+    explain.add_argument("--patch-size", type=int, default=32)
+    explain.add_argument("--stride", type=int, default=16)
+    explain.add_argument("--overlay-alpha", type=float, default=0.45)
 
     video = sub.add_parser("infer-video", help="Extract passages and classify each one")
     video.add_argument("--video", required=True)
@@ -252,6 +285,8 @@ def main(argv=None):
             recall_target=args.recall_target,
             recall_weight=args.recall_weight,
             selection_metric=args.selection_metric,
+            augmentation=args.augmentation,
+            tensorboard_logdir=args.tensorboard_logdir or None,
         )
         print(json.dumps(metrics, indent=2))
     elif args.command == "infer-images":
@@ -266,6 +301,23 @@ def main(argv=None):
             decision_threshold=args.decision_threshold,
         )
         print(f"Wrote {len(rows)} predictions to {args.output}")
+    elif args.command == "explain":
+        from glove_chirality.analysis import explain_image
+
+        result = explain_image(
+            args.image,
+            args.checkpoint,
+            args.output,
+            device=args.device,
+            method=args.method,
+            target_class=args.target_class,
+            samples=args.samples,
+            noise_std=args.noise_std,
+            patch_size=args.patch_size,
+            stride=args.stride,
+            overlay_alpha=args.overlay_alpha,
+        )
+        print(json.dumps(result, indent=2))
     elif args.command == "infer-video":
         _infer_video(args)
     elif args.command == "infer-live":

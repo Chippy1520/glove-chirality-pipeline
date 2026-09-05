@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from glove_chirality.web_app import _is_loopback, create_app
+from glove_chirality.web_app import _is_loopback, create_app, create_viewer_app
 from glove_chirality.web_service import CommandService
 
 
@@ -15,7 +15,14 @@ def service(tmp_path):
 
 @pytest.fixture
 def app(service):
-    application = create_app(service, allow_lan=True, lan_token="viewer-secret")
+    application = create_app(service, lan_enabled=True)
+    application.config.update(TESTING=True)
+    return application
+
+
+@pytest.fixture
+def viewer_app(service):
+    application = create_viewer_app(service, lan_token="viewer-secret")
     application.config.update(TESTING=True)
     return application
 
@@ -42,7 +49,7 @@ def test_browser_shell_is_responsive_and_uses_tick_controls(app):
 
 def test_lan_mode_requires_nonempty_token(service):
     with pytest.raises(ValueError, match="non-empty access token"):
-        create_app(service, allow_lan=True)
+        create_viewer_app(service, lan_token="")
 
 
 def test_loopback_detection_does_not_trust_lan_addresses():
@@ -73,8 +80,8 @@ def test_host_receives_controls_and_raw_logs(app, service):
     assert payload["comparison_root"] is not None
 
 
-def test_lan_viewer_requires_token_and_is_read_only(app):
-    client = app.test_client()
+def test_lan_viewer_requires_token_and_has_no_mutation_routes(viewer_app):
+    client = viewer_app.test_client()
 
     assert client.get("/api/state", **remote()).status_code == 401
     authorized = remote({"X-GRIP-Token": "viewer-secret"})
@@ -89,12 +96,12 @@ def test_lan_viewer_requires_token_and_is_read_only(app):
     assert state.get_json()["can_edit"] is False
     assert state.get_json()["logs"] == []
     assert state.get_json()["comparison_root"] is None
-    assert mutation.status_code == 403
-    assert paths.status_code == 403
+    assert mutation.status_code == 404
+    assert paths.status_code == 404
 
 
 def test_remote_index_requires_explicit_lan_mode(service):
-    application = create_app(service, allow_lan=False)
+    application = create_app(service)
     application.config.update(TESTING=True)
 
     response = application.test_client().get("/", **remote())
@@ -102,8 +109,26 @@ def test_remote_index_requires_explicit_lan_mode(service):
     assert response.status_code == 403
 
 
-def test_lan_shell_hides_host_controls_before_javascript(app):
-    response = app.test_client().get("/", **remote())
+def test_host_controller_rejects_dns_rebinding_host(app):
+    response = app.test_client().get("/api/state", headers={"Host": "attacker.example"})
+
+    assert response.status_code == 403
+    assert response.get_json()["error"] == "Untrusted Host header"
+
+
+def test_host_controller_rejects_cross_origin_mutation(app):
+    response = app.test_client().post(
+        "/api/run",
+        json={"action": "extract_single"},
+        headers={"Origin": "https://attacker.example"},
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["error"] == "Untrusted request origin"
+
+
+def test_lan_shell_hides_host_controls_before_javascript(viewer_app):
+    response = viewer_app.test_client().get("/", **remote())
 
     assert response.status_code == 200
     assert '<body data-local="false">' in response.get_data(as_text=True)
@@ -112,8 +137,9 @@ def test_lan_shell_hides_host_controls_before_javascript(app):
 def test_host_run_route_uses_allowlisted_command_builder(app, service, monkeypatch):
     captured = {}
 
-    def capture(slot, command):
-        captured.update(slot=slot, command=command)
+    def capture(slot, command, *, action=None):
+        captured.update(slot=slot, command=command, action=action)
+        return "test-job-id"
 
     monkeypatch.setattr(service, "start", capture)
     response = app.test_client().post(
@@ -128,7 +154,9 @@ def test_host_run_route_uses_allowlisted_command_builder(app, service, monkeypat
     )
 
     assert response.status_code == 202
+    assert response.get_json()["job_id"] == "test-job-id"
     assert captured["slot"] == "pipeline"
+    assert captured["action"] == "extract_dataset"
     assert "extract-dataset" in captured["command"]
     assert "left-videos" in captured["command"]
 
@@ -136,7 +164,7 @@ def test_host_run_route_uses_allowlisted_command_builder(app, service, monkeypat
 def test_unknown_web_action_is_rejected_without_starting_process(app, service, monkeypatch):
     started = False
 
-    def capture(_slot, _command):
+    def capture(_slot, _command, *, action=None):
         nonlocal started
         started = True
 
@@ -198,7 +226,7 @@ def test_host_can_prepare_layer_one_presets_without_implicit_save(app, tmp_path)
     assert config.read_text(encoding="utf-8") == "{}\n"
 
 
-def test_lan_comparison_redacts_host_path(app, service, tmp_path):
+def test_lan_comparison_redacts_host_path(viewer_app, service, tmp_path):
     metrics = tmp_path / "outputs" / "model.pt.metrics.json"
     metrics.write_text(
         json.dumps({
@@ -214,6 +242,6 @@ def test_lan_comparison_redacts_host_path(app, service, tmp_path):
     )
     authorized = remote({"X-GRIP-Token": "viewer-secret"})
 
-    payload = app.test_client().get("/api/comparison", **authorized).get_json()
+    payload = viewer_app.test_client().get("/api/comparison", **authorized).get_json()
 
     assert payload["runs"][0]["source"] == Path(metrics).name

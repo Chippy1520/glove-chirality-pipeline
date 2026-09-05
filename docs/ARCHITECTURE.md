@@ -48,7 +48,7 @@ frame.
 | `diagnostics.py` | Clean-frame ROI/trigger/mask/candidate calibration preview |
 | `cli.py` | Public offline, training, preview, and live commands |
 | `gui_commands.py` | Typed UI-to-CLI command construction; no arbitrary shell execution |
-| `web_app.py` / `web_service.py` | Responsive host UI, authenticated read-only LAN API, subprocess/log state, and path/config endpoints |
+| `web_app.py` / `web_service.py` | Separate loopback controller/private-interface viewer apps, bounded subprocess/job state, and host path/config endpoints |
 | `web/templates` / `web/static` | Device-responsive interface with explicit tick-mark controls |
 | `ui_presets.py` | UI-neutral custom-YOLO and tight-crop configuration presets |
 | `gui.py` / `gui_processes.py` | Legacy Tkinter migration fallback and shared independent process slots |

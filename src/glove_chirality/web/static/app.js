@@ -49,10 +49,17 @@
     applyAccess(Boolean(payload.can_edit));
     const pipeline = Boolean(payload.running.pipeline);
     const tensorboard = Boolean(payload.running.tensorboard);
-    $("#pipeline-state").textContent = pipeline ? "Running" : "Idle";
-    $("#tensorboard-state").textContent = tensorboard ? "Running" : "Idle";
-    setBadge($("#pipeline-badge"), pipeline ? "Pipeline running" : "Pipeline idle", pipeline ? "running" : "neutral");
-    setBadge($("#tensorboard-badge"), tensorboard ? "TensorBoard running" : "TensorBoard idle", tensorboard ? "running" : "neutral");
+    const pipelineJob = payload.jobs?.pipeline;
+    const tensorboardJob = payload.jobs?.tensorboard;
+    const jobText = (job, fallback) => {
+      if (!job) return fallback;
+      const action = job.action.replaceAll("_", " ");
+      return `${action} · ${job.status}`;
+    };
+    $("#pipeline-state").textContent = jobText(pipelineJob, "Idle");
+    $("#tensorboard-state").textContent = jobText(tensorboardJob, "Idle");
+    setBadge($("#pipeline-badge"), jobText(pipelineJob, "Pipeline idle"), pipeline ? "running" : "neutral");
+    setBadge($("#tensorboard-badge"), jobText(tensorboardJob, "TensorBoard idle"), tensorboard ? "running" : "neutral");
     $$('[data-stop="pipeline"]').forEach((button) => { button.disabled = !pipeline; });
     $$('[data-stop="tensorboard"]').forEach((button) => { button.disabled = !tensorboard; });
 

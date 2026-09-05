@@ -17,7 +17,7 @@ Equivalent module command:
 python -m glove_chirality.web_app
 ```
 
-The server binds to `127.0.0.1` by default and opens the host browser. The previous Tkinter application remains available during migration as `glove-pipeline-tk`.
+The controller binds only to `127.0.0.1:8765` by default and opens the host browser. It validates loopback peer, Host, and Origin information. The previous Tkinter application remains available during migration as `glove-pipeline-tk`.
 
 ### Read-only viewing from another device
 
@@ -25,9 +25,11 @@ On a trusted private network, opt in explicitly:
 
 ```bash
 glove-pipeline-gui --lan
+# Change the separate viewer port if needed
+glove-pipeline-gui --lan --lan-port 8877
 ```
 
-The host terminal prints two URLs. Open the complete LAN viewer URL on the phone, tablet, or second computer; its access token is carried in the URL fragment, removed from the address immediately by the browser, and then sent only in the API header.
+The host terminal prints two URLs. Host controls remain on `127.0.0.1:8765`; a structurally separate read-only application binds to the detected private interface on port `8766` by default. Open the complete viewer URL on the phone, tablet, or second computer; its access token is carried in the URL fragment, removed from the address immediately by the browser, and then sent only in the API header.
 
 LAN clients can view process state and historical comparison metrics. They cannot:
 
@@ -37,7 +39,7 @@ LAN clients can view process state and historical comparison metrics. They canno
 - start or stop extraction, training, inference, or TensorBoard;
 - open the host-only TensorBoard server.
 
-These restrictions are enforced by the server, not only hidden in the page. LAN mode uses HTTP and is intended only for a trusted private network; do not expose it through port forwarding or a public interface.
+These restrictions are structural: the LAN application does not register mutation, path, configuration, raw-log, or TensorBoard routes. LAN mode still uses plain HTTP, so it is intended only for a trusted private network where token sniffing is not a concern. Do not expose it through port forwarding, a public interface, or an untrusted network.
 
 ## Tabs
 

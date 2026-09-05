@@ -149,9 +149,11 @@ Use `pytest`; parameterize frame-boundary cases and seed random/property tests.
 ### 3.6 Browser workstation and LAN boundary
 
 - [ ] Host requests can load validated YAML, browse host paths, and launch only allowlisted typed CLI actions.
+- [ ] Host controls reject non-loopback peers and untrusted Host/Origin values.
 - [ ] LAN mode is opt-in; unauthenticated LAN API requests are rejected and the token is never placed in an HTTP query string.
-- [ ] Authenticated LAN viewers can read status/comparison metrics but cannot read raw logs/paths or mutate any process/configuration state.
-- [ ] Pipeline and TensorBoard process slots remain independent and release after completion.
+- [ ] The private-interface LAN app registers only shell, health, sanitized state, and redacted comparison routes.
+- [ ] Pipeline and TensorBoard process slots remain independent, atomically reject duplicate starts, retain bounded logs, and release after completion.
+- [ ] TensorBoard rejects missing log directories and occupied ports before launch and remains loopback-only.
 - [ ] Desktop and narrow viewport captures have no horizontal clipping; comparison tables retain intentional horizontal scrolling.
 - [ ] Checkbox controls expose keyboard focus and render selected state with an explicit ✓ tick.
 

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import importlib.util
+import os
+import socket
 import subprocess
 import threading
+import uuid
 from collections import deque
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +22,16 @@ class LogEntry:
     sequence: int
     slot: str
     text: str
+
+
+@dataclass
+class JobState:
+    job_id: str
+    action: str
+    status: str
+    started_at: str
+    finished_at: str | None = None
+    exit_code: int | None = None
 
 
 def _text(payload: dict[str, Any], key: str, default: str = "") -> str:
@@ -133,6 +148,52 @@ def build_web_command(action: str, payload: dict[str, Any]) -> tuple[str, list[s
     return "pipeline", command
 
 
+def _command_option(command: list[str], option: str) -> str:
+    try:
+        return command[command.index(option) + 1]
+    except (ValueError, IndexError) as error:
+        raise ValueError(f"Missing required TensorBoard option: {option}") from error
+
+
+def _validate_tensorboard(command: list[str], workdir: Path) -> None:
+    if importlib.util.find_spec("tensorboard") is None:
+        raise ValueError("TensorBoard is not installed in this Python environment")
+    logdir = Path(_command_option(command, "--logdir")).expanduser()
+    if not logdir.is_absolute():
+        logdir = workdir / logdir
+    if not logdir.resolve().is_dir():
+        raise ValueError(f"TensorBoard log directory not found: {logdir.resolve()}")
+    port = int(_command_option(command, "--port"))
+    if not 1 <= port <= 65535:
+        raise ValueError("TensorBoard port must be in [1, 65535]")
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind(("127.0.0.1", port))
+    except OSError as error:
+        raise ValueError(f"TensorBoard port {port} is already in use") from error
+    finally:
+        probe.close()
+
+
+def _terminate_process(process: subprocess.Popen[str]) -> None:
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if result.returncode != 0 and process.poll() is None:
+            process.terminate()
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
 class CommandService:
     """Thread-safe subprocess state shared by Flask request threads."""
 
@@ -142,6 +203,7 @@ class CommandService:
         self._lock = threading.RLock()
         self._logs: deque[LogEntry] = deque(maxlen=max_log_entries)
         self._sequence = 0
+        self._jobs: dict[str, JobState | None] = {"pipeline": None, "tensorboard": None}
         self.comparison_root = self.workdir / "outputs"
 
     def _append(self, slot: str, text: str) -> None:
@@ -149,13 +211,18 @@ class CommandService:
             self._sequence += 1
             self._logs.append(LogEntry(self._sequence, slot, text.rstrip("\n")))
 
-    def start(self, slot: str, command: list[str]) -> None:
+    def start(self, slot: str, command: list[str], *, action: str | None = None) -> str:
         with self._lock:
             self.processes.ensure_available(slot)
+            if slot == "tensorboard":
+                _validate_tensorboard(command, self.workdir)
             flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+            environment = os.environ.copy()
+            environment["PYTHONUNBUFFERED"] = "1"
             process = subprocess.Popen(
                 command,
                 cwd=self.workdir,
+                env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -165,6 +232,13 @@ class CommandService:
                 creationflags=flags,
             )
             self.processes.claim(slot, process)
+            job = JobState(
+                job_id=uuid.uuid4().hex,
+                action=action or slot,
+                status="running",
+                started_at=datetime.now(UTC).isoformat(),
+            )
+            self._jobs[slot] = job
             self._append(slot, "$ " + subprocess.list2cmdline(command))
 
         def collect() -> None:
@@ -174,16 +248,27 @@ class CommandService:
             code = process.wait()
             with self._lock:
                 self.processes.release(slot, process)
+                if self._jobs.get(slot) is job:
+                    if job.status == "stopping":
+                        job.status = "cancelled"
+                    else:
+                        job.status = "succeeded" if code == 0 else "failed"
+                    job.finished_at = datetime.now(UTC).isoformat()
+                    job.exit_code = code
             self._append(slot, f"Process finished with exit code {code}.")
 
         threading.Thread(target=collect, daemon=True).start()
+        return job.job_id
 
     def stop(self, slot: str) -> bool:
         with self._lock:
             process = self.processes.get(slot)
             if process is None or process.poll() is not None:
                 return False
-            process.terminate()
+            job = self._jobs.get(slot)
+            if job is not None:
+                job.status = "stopping"
+            _terminate_process(process)
             self._append(slot, "Stop requested.")
             return True
 
@@ -196,6 +281,10 @@ class CommandService:
             }
             return {
                 "running": running,
+                "jobs": {
+                    slot: asdict(job) if job is not None else None
+                    for slot, job in self._jobs.items()
+                },
                 "logs": [asdict(entry) for entry in self._logs] if include_logs else [],
                 "last_sequence": self._sequence,
             }
@@ -248,5 +337,5 @@ class CommandService:
         }
 
     def shutdown(self) -> None:
-        with self._lock:
-            self.processes.terminate_all()
+        for slot in ("pipeline", "tensorboard"):
+            self.stop(slot)

@@ -12,6 +12,7 @@ from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 from flask import Flask, abort, jsonify, render_template, request
@@ -53,14 +54,29 @@ def _json_payload() -> dict[str, Any]:
     return payload
 
 
+def _hostname(authority: str) -> str | None:
+    return urlsplit(f"//{authority}").hostname
+
+
+def _secure_response(response):
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; img-src 'self' data:; style-src 'self'; "
+        "script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def create_app(
     service: CommandService,
     *,
-    allow_lan: bool = False,
-    lan_token: str = "",
+    lan_enabled: bool = False,
 ) -> Flask:
-    if allow_lan and not lan_token:
-        raise ValueError("LAN mode requires a non-empty access token")
+    """Create the loopback-only host controller application."""
     app = Flask(
         __name__,
         template_folder="web/templates",
@@ -68,8 +84,7 @@ def create_app(
     )
     app.config.update(
         COMMAND_SERVICE=service,
-        ALLOW_LAN=allow_lan,
-        LAN_TOKEN=lan_token,
+        LAN_ENABLED=lan_enabled,
     )
 
     def local_request() -> bool:
@@ -77,30 +92,17 @@ def create_app(
 
     @app.after_request
     def security_headers(response):
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' data:; style-src 'self'; "
-            "script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
-        )
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        if request.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
-        return response
+        return _secure_response(response)
 
     @app.before_request
-    def authenticate_lan():
-        if local_request() or request.endpoint in {"static", "health"}:
-            return
-        if not app.config["ALLOW_LAN"]:
-            abort(403, description="LAN access is disabled")
-        if request.endpoint == "index":
-            return
-        supplied = request.headers.get("X-GRIP-Token", "")
-        expected = app.config["LAN_TOKEN"]
-        if not supplied or not hmac.compare_digest(supplied, expected):
-            abort(401, description="A valid LAN access token is required")
-        return
+    def authorize_host():
+        if not local_request():
+            abort(403, description="Host controls accept loopback requests only")
+        if not _is_loopback(_hostname(request.host)):
+            abort(403, description="Untrusted Host header")
+        origin = request.headers.get("Origin")
+        if origin and not _is_loopback(urlsplit(origin).hostname):
+            abort(403, description="Untrusted request origin")
 
     def host_only(view: Callable):
         @wraps(view)
@@ -129,7 +131,7 @@ def create_app(
             "index.html",
             classifier_choices=CLASSIFIER_CHOICES,
             comparison_metrics=COMPARISON_METRICS,
-            initial_can_edit=local_request(),
+            initial_can_edit=True,
         )
 
     @app.get("/api/health")
@@ -138,12 +140,11 @@ def create_app(
 
     @app.get("/api/state")
     def state():
-        can_edit = local_request()
-        snapshot = service.snapshot(include_logs=can_edit)
+        snapshot = service.snapshot(include_logs=True)
         snapshot.update(
-            can_edit=can_edit,
-            lan_enabled=bool(app.config["ALLOW_LAN"]),
-            comparison_root=str(service.comparison_root) if can_edit else None,
+            can_edit=True,
+            lan_enabled=bool(app.config["LAN_ENABLED"]),
+            comparison_root=str(service.comparison_root),
         )
         return jsonify(snapshot)
 
@@ -153,8 +154,8 @@ def create_app(
         payload = _json_payload()
         action = str(payload.pop("action", "")).strip()
         slot, command = build_web_command(action, payload)
-        service.start(slot, command)
-        return jsonify(slot=slot, status="started"), 202
+        job_id = service.start(slot, command, action=action)
+        return jsonify(job_id=job_id, slot=slot, status="started"), 202
 
     @app.post("/api/stop/<slot>")
     @host_only
@@ -238,7 +239,7 @@ def create_app(
         metric = request.args.get("metric", "recall_right")
         return jsonify(
             metric=metric,
-            runs=service.comparison(metric, reveal_paths=local_request()),
+            runs=service.comparison(metric, reveal_paths=True),
         )
 
     @app.put("/api/comparison/root")
@@ -251,6 +252,67 @@ def create_app(
     return app
 
 
+def create_viewer_app(service: CommandService, *, lan_token: str) -> Flask:
+    """Create an authenticated LAN observer with no mutation routes."""
+    if not lan_token:
+        raise ValueError("LAN viewer requires a non-empty access token")
+    app = Flask(
+        __name__,
+        template_folder="web/templates",
+        static_folder="web/static",
+    )
+
+    @app.after_request
+    def security_headers(response):
+        return _secure_response(response)
+
+    @app.before_request
+    def authenticate_viewer():
+        if request.endpoint in {"static", "index", "health"}:
+            return
+        supplied = request.headers.get("X-GRIP-Token", "")
+        if not supplied or not hmac.compare_digest(supplied, lan_token):
+            abort(401, description="A valid LAN access token is required")
+
+    @app.errorhandler(400)
+    @app.errorhandler(401)
+    @app.errorhandler(403)
+    @app.errorhandler(404)
+    def http_error(error):
+        return jsonify(error=str(error.description)), error.code
+
+    @app.errorhandler(OSError)
+    @app.errorhandler(ValueError)
+    def input_error(error):
+        return jsonify(error=str(error)), 400
+
+    @app.get("/")
+    def index():
+        return render_template(
+            "index.html",
+            classifier_choices=CLASSIFIER_CHOICES,
+            comparison_metrics=COMPARISON_METRICS,
+            initial_can_edit=False,
+        )
+
+    @app.get("/api/health")
+    def health():
+        return jsonify(status="ok")
+
+    @app.get("/api/state")
+    def state():
+        snapshot = service.snapshot(include_logs=False)
+        snapshot.update(can_edit=False, lan_enabled=True, comparison_root=None)
+        return jsonify(snapshot)
+
+    @app.get("/api/comparison")
+    def comparison():
+        metric = request.args.get("metric", "recall_right")
+        return jsonify(metric=metric, runs=service.comparison(metric, reveal_paths=False))
+
+    return app
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="GRIP browser workstation")
     parser.add_argument("--port", type=int, default=8765)
@@ -258,6 +320,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--lan",
         action="store_true",
         help="Allow authenticated read-only access from other devices on the local network",
+    )
+    parser.add_argument(
+        "--lan-port",
+        type=int,
+        default=8766,
+        help="Port for the separate read-only LAN viewer (default: 8766)",
     )
     parser.add_argument(
         "--token",
@@ -273,35 +341,66 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     if not 1 <= args.port <= 65535:
         raise ValueError("port must be in [1, 65535]")
+    if not 1 <= args.lan_port <= 65535:
+        raise ValueError("lan-port must be in [1, 65535]")
+    if args.lan and args.lan_port == args.port:
+        raise ValueError("host port and LAN viewer port must differ")
     if args.token and not args.lan:
         raise ValueError("--token requires --lan")
 
     token = args.token or (secrets.token_urlsafe(18) if args.lan else "")
     service = CommandService(args.workdir)
-    app = create_app(service, allow_lan=args.lan, lan_token=token)
+    app = create_app(service, lan_enabled=args.lan)
+    viewer_app = create_viewer_app(service, lan_token=token) if args.lan else None
     if args.smoke_test:
         client = app.test_client()
         response = client.get("/api/health")
         if response.status_code != 200:
             raise RuntimeError("Web application health check failed")
+        if viewer_app is not None:
+            response = viewer_app.test_client().get("/api/health")
+            if response.status_code != 200:
+                raise RuntimeError("LAN viewer health check failed")
         return
 
     local_url = f"http://127.0.0.1:{args.port}"
     print(f"GRIP host controls: {local_url}", flush=True)
+    lan_address = ""
     if args.lan:
+        lan_address = _lan_address()
+        address = ipaddress.ip_address(lan_address)
+        if not address.is_private or address.is_loopback:
+            raise RuntimeError(f"No private LAN interface found: {lan_address}")
         print(
-            f"GRIP LAN viewer: http://{_lan_address()}:{args.port}/#token={token}",
+            f"GRIP LAN viewer: http://{lan_address}:{args.lan_port}/#token={token}",
             flush=True,
         )
         print("LAN clients are read-only; host paths, raw logs, and actions stay local.", flush=True)
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(local_url)).start()
 
-    from waitress import serve
+    from waitress import create_server
 
+    host_server = create_server(app, host="127.0.0.1", port=args.port, threads=6)
+    viewer_server = None
+    viewer_thread = None
+    if viewer_app is not None:
+        viewer_server = create_server(
+            viewer_app,
+            host=lan_address,
+            port=args.lan_port,
+            threads=4,
+        )
+        viewer_thread = threading.Thread(target=viewer_server.run, daemon=True)
+        viewer_thread.start()
     try:
-        serve(app, host="0.0.0.0" if args.lan else "127.0.0.1", port=args.port, threads=6)
+        host_server.run()
     finally:
+        host_server.close()
+        if viewer_server is not None:
+            viewer_server.close()
+        if viewer_thread is not None:
+            viewer_thread.join(timeout=2.0)
         service.shutdown()
 
 

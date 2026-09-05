@@ -47,8 +47,11 @@ frame.
 | `comparison.py` | Lightweight historical metrics discovery, split-aware ranking, and CSV export |
 | `diagnostics.py` | Clean-frame ROI/trigger/mask/candidate calibration preview |
 | `cli.py` | Public offline, training, preview, and live commands |
-| `gui_commands.py` / `gui.py` | GUI-to-CLI construction, concurrent TensorBoard, and comparison UI |
-| `gui_processes.py` | Independent pipeline/TensorBoard subprocess slots and shutdown |
+| `gui_commands.py` | Typed UI-to-CLI command construction; no arbitrary shell execution |
+| `web_app.py` / `web_service.py` | Responsive host UI, authenticated read-only LAN API, subprocess/log state, and path/config endpoints |
+| `web/templates` / `web/static` | Device-responsive interface with explicit tick-mark controls |
+| `ui_presets.py` | UI-neutral custom-YOLO and tight-crop configuration presets |
+| `gui.py` / `gui_processes.py` | Legacy Tkinter migration fallback and shared independent process slots |
 
 ## Detection contract
 

@@ -46,7 +46,7 @@ For an NVIDIA GPU, install the PyTorch build matching the machine's CUDA driver 
 - Shared passage extractor for dataset and deployment modes.
 - TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16, Swin-T, ConvNeXt V2 Pico, and DINOv3 ConvNeXt-Tiny adapters.
 - Explicit `auto/cpu/cuda/cuda:N` controls, CUDA AMP, DataLoader workers, TensorBoard logging, and chirality-safe augmentation policies.
-- Responsive, scrollable Tkinter GUI that delegates pipeline operations to the public CLI, runs TensorBoard concurrently, and includes individual-decision explanation plus split-aware model comparison.
+- Responsive browser workstation with host-only actions, authenticated read-only LAN viewing, concurrent local TensorBoard, explanations, and split-aware model comparison; legacy Tkinter remains available during migration.
 - Grouped splitting, class-weighted loss, balanced metrics, synthetic integration fixtures, and CI.
 - No real recordings or trained production weights are in this repository.
 

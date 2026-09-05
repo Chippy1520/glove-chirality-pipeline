@@ -146,6 +146,15 @@ Use `pytest`; parameterize frame-boundary cases and seed random/property tests.
 - [ ] Low-confidence, tie, NaN, infinity, malformed output, and unknown-model-version cases reject safely.
 - [ ] Batch and single-event inference return identical scores within numerical tolerance and preserve event ordering.
 
+### 3.6 Browser workstation and LAN boundary
+
+- [ ] Host requests can load validated YAML, browse host paths, and launch only allowlisted typed CLI actions.
+- [ ] LAN mode is opt-in; unauthenticated LAN API requests are rejected and the token is never placed in an HTTP query string.
+- [ ] Authenticated LAN viewers can read status/comparison metrics but cannot read raw logs/paths or mutate any process/configuration state.
+- [ ] Pipeline and TensorBoard process slots remain independent and release after completion.
+- [ ] Desktop and narrow viewport captures have no horizontal clipping; comparison tables retain intentional horizontal scrolling.
+- [ ] Checkbox controls expose keyboard focus and render selected state with an explicit ✓ tick.
+
 ---
 
 ## 4. Integration and end-to-end tests

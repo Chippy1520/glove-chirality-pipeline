@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101828">
+  <title>GRIP · Glove chirality workstation</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body data-local="{{ 'true' if initial_can_edit else 'false' }}">
+  <a class="skip-link" href="#overview">Skip to workspace</a>
+  <header class="topbar">
+    <a class="brand" href="#overview" aria-label="GRIP overview">
+      <span class="brand-mark">G</span>
+      <span><strong>GRIP</strong><small>Glove chirality workstation</small></span>
+    </a>
+    <div class="top-status">
+      <span id="access-badge" class="badge neutral">Connecting…</span>
+      <span id="pipeline-badge" class="badge neutral">Pipeline idle</span>
+      <span id="tensorboard-badge" class="badge neutral">TensorBoard idle</span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="sidebar" aria-label="Workspace sections">
+      <a class="nav-link active" href="#overview" aria-current="page"><span>01</span>Overview</a>
+      <a class="nav-link host-only" href="#extract"><span>02</span>Extract</a>
+      <a class="nav-link host-only" href="#layer-one"><span>03</span>Layer 1</a>
+      <a class="nav-link host-only" href="#train"><span>04</span>Train</a>
+      <a class="nav-link host-only" href="#infer"><span>05</span>Infer</a>
+      <a class="nav-link host-only" href="#explain"><span>06</span>Explain</a>
+      <a class="nav-link" href="#compare"><span>07</span>Compare</a>
+      <a class="nav-link host-only" href="#logs"><span>08</span>Run log</a>
+    </nav>
+
+    <main>
+      <section id="overview" class="page-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">System overview</p><h1>Passage extraction and chirality analysis</h1></div>
+          <p class="lede">A local-first workstation. Detection, event extraction, and classification continue to run through the reproducible CLI.</p>
+        </div>
+        <div id="remote-notice" class="notice info" hidden>
+          <strong>Read-only LAN view.</strong> Filesystem paths, configuration, raw logs, TensorBoard, and execution controls remain available only on the host machine.
+        </div>
+        <div class="metric-grid">
+          <article class="metric-card"><span>Pipeline</span><strong id="pipeline-state">Idle</strong><small>One extraction, training, or inference task</small></article>
+          <article class="metric-card"><span>TensorBoard</span><strong id="tensorboard-state">Idle</strong><small>Independent host-only process</small></article>
+          <article class="metric-card"><span>Historical runs</span><strong id="run-count">—</strong><small>Compatible metric artifacts</small></article>
+          <article class="metric-card"><span>Priority metric</span><strong>Right recall</strong><small>Review with left false alarms</small></article>
+        </div>
+
+        <article class="panel host-only">
+          <div class="panel-heading"><div><p class="eyebrow">Local diagnostics</p><h2>TensorBoard</h2></div><span class="local-chip">Host only</span></div>
+          <form class="action-form compact-form" data-action="tensorboard">
+            <label class="field grow"><span>Log directory</span><span class="input-row"><input id="tb-logdir" name="logdir" value="outputs/tensorboard" required><button type="button" class="icon-button browse" data-target="tb-logdir" data-kind="directory">Browse</button></span></label>
+            <label class="field short"><span>Port</span><input name="port" type="number" value="6006" min="1" max="65535"></label>
+            <button class="button primary" type="submit">Start TensorBoard</button>
+            <button class="button" type="button" id="open-tensorboard">Open dashboard</button>
+            <button class="button danger" type="button" data-stop="tensorboard">Stop</button>
+          </form>
+        </article>
+      </section>
+
+      <section id="extract" class="page-section host-only">
+        <div class="section-heading"><div><p class="eyebrow">Workflow 01</p><h1>Extract representative crops</h1></div><p class="lede">Use the same passage extractor and YAML for dataset creation and deployment.</p></div>
+        <article class="panel">
+          <div class="panel-heading"><div><h2>Build labeled dataset</h2><p>Left and right source directories are processed independently without labels affecting detection.</p></div></div>
+          <form class="action-form form-grid" data-action="extract_dataset">
+            <label class="field"><span>Left video directory</span><span class="input-row"><input id="extract-left" name="left" required><button type="button" class="icon-button browse" data-target="extract-left" data-kind="directory">Browse</button></span></label>
+            <label class="field"><span>Right video directory</span><span class="input-row"><input id="extract-right" name="right" required><button type="button" class="icon-button browse" data-target="extract-right" data-kind="directory">Browse</button></span></label>
+            <label class="field"><span>Dataset output</span><span class="input-row"><input id="extract-output" name="output" value="outputs/dataset" required><button type="button" class="icon-button browse" data-target="extract-output" data-kind="directory">Browse</button></span></label>
+            <label class="field"><span>Extraction config</span><span class="input-row"><input id="extract-config" name="config" value="configs/default.yaml" required><button type="button" class="icon-button browse" data-target="extract-config" data-kind="file">Browse</button></span></label>
+            <div class="form-actions"><button class="button primary" type="submit">Build dataset</button></div>
+          </form>
+        </article>
+        <div class="two-column">
+          <article class="panel">
+            <div class="panel-heading"><div><h2>Single source</h2><p>Extract one video or source directory.</p></div></div>
+            <form class="action-form form-grid one" data-action="extract_single">
+              <label class="field"><span>Input</span><span class="input-row"><input id="single-input" name="input" required><button type="button" class="icon-button browse" data-target="single-input" data-kind="file">Browse</button></span></label>
+              <label class="field"><span>Output directory</span><input name="output" value="outputs/single" required></label>
+              <label class="field"><span>Source label</span><select name="label"><option>unknown</option><option>left</option><option>right</option></select></label>
+              <label class="field"><span>Extraction config</span><input name="config" value="configs/default.yaml" required></label>
+              <div class="form-actions"><button class="button primary" type="submit">Extract source</button></div>
+            </form>
+          </article>
+          <article class="panel">
+            <div class="panel-heading"><div><h2>Calibration preview</h2><p>Inspect detector geometry before extraction.</p></div></div>
+            <form class="action-form form-grid one" data-action="preview">
+              <label class="field"><span>Video</span><span class="input-row"><input id="preview-video" name="video" required><button type="button" class="icon-button browse" data-target="preview-video" data-kind="file">Browse</button></span></label>
+              <label class="field"><span>Preview output</span><input name="output" value="outputs/preview.jpg" required></label>
+              <label class="field"><span>Timestamp (s)</span><input name="seconds" type="number" value="0" min="0" step="0.1"></label>
+              <label class="field"><span>Warm-up (s)</span><input name="warmup_seconds" type="number" value="2" min="0" step="0.1"></label>
+              <label class="field"><span>Extraction config</span><input name="config" value="configs/default.yaml" required></label>
+              <div class="form-actions"><button class="button primary" type="submit">Render preview</button></div>
+            </form>
+          </article>
+        </div>
+      </section>
+
+      <section id="layer-one" class="page-section host-only">
+        <div class="section-heading"><div><p class="eyebrow">Workflow 02</p><h1>Layer 1 configuration</h1></div><p class="lede">Edit and validate the host YAML directly. Invalid or unknown settings are rejected before replacement.</p></div>
+        <article class="panel config-panel">
+          <div class="config-toolbar">
+            <label class="field grow"><span>Configuration file</span><span class="input-row"><input id="config-path" value="configs/default.yaml"><button type="button" class="icon-button browse" data-target="config-path" data-kind="file">Browse</button></span></label>
+            <button id="load-config" class="button" type="button">Load</button>
+            <button id="save-config" class="button primary" type="button">Validate & save</button>
+          </div>
+          <div class="preset-toolbar">
+            <label class="field grow"><span>Custom YOLO segmentation checkpoint</span><span class="input-row"><input id="preset-yolo-model" placeholder="Path to best.pt"><button type="button" class="icon-button browse" data-target="preset-yolo-model" data-kind="file">Browse</button></span></label>
+            <button class="button" type="button" data-config-preset="custom_yolo">Apply YOLO preset</button>
+            <button class="button" type="button" data-config-preset="tight_crop">Use tight detection bbox</button>
+          </div>
+          <label class="field"><span>YAML settings</span><textarea id="config-editor" rows="28" spellcheck="false" aria-label="Extraction configuration YAML"></textarea></label>
+        </article>
+      </section>
+
+      <section id="train" class="page-section host-only">
+        <div class="section-heading"><div><p class="eyebrow">Workflow 03</p><h1>Train Layer 2</h1></div><p class="lede">Mixed left/right training with source-grouped validation and chirality-safe augmentation.</p></div>
+        <article class="panel">
+          <form class="action-form form-grid" data-action="train">
+            <label class="field"><span>Manifest</span><span class="input-row"><input id="train-manifest" name="manifest" required><button type="button" class="icon-button browse" data-target="train-manifest" data-kind="file">Browse</button></span></label>
+            <label class="field"><span>Checkpoint output</span><input name="output" value="outputs/models/classifier.pt" required></label>
+            <label class="field"><span>Model</span><select name="model">{% for model in classifier_choices %}<option value="{{ model }}">{{ model }}</option>{% endfor %}</select></label>
+            <label class="field"><span>Device</span><select name="device"><option>auto</option><option>cpu</option><option>cuda</option><option>cuda:0</option></select></label>
+            <label class="field"><span>Epochs</span><input name="epochs" type="number" value="20" min="1"></label>
+            <label class="field"><span>Batch size</span><input name="batch_size" type="number" value="32" min="1"></label>
+            <label class="field"><span>Image size</span><input name="image_size" type="number" value="224" min="32"></label>
+            <label class="field"><span>Learning rate</span><input name="learning_rate" type="number" value="0.001" min="0" step="0.0001"></label>
+            <label class="field"><span>Validation fraction</span><input name="validation_fraction" type="number" value="0.2" min="0.01" max="0.99" step="0.01"></label>
+            <label class="field"><span>Seed</span><input name="seed" type="number" value="42"></label>
+            <label class="field"><span>DataLoader workers</span><input name="workers" type="number" value="0" min="0"></label>
+            <label class="field"><span>Loss</span><select name="loss"><option>weighted_cross_entropy</option><option>cross_entropy</option><option>recall_hybrid</option></select></label>
+            <label class="field"><span>Recall target</span><select name="recall_target"><option>right</option><option>left</option></select></label>
+            <label class="field"><span>Recall weight</span><input name="recall_weight" type="number" value="1" min="0" step="0.1"></label>
+            <label class="field"><span>Select checkpoint by</span><select name="selection_metric"><option>macro_recall</option><option>recall_right</option><option>macro_f1</option><option>accuracy</option><option>recall_left</option></select></label>
+            <label class="field"><span>Augmentation</span><select name="augmentation"><option>standard</option><option>anti_spurious</option><option>none</option></select></label>
+            <label class="field"><span>TensorBoard log directory</span><input name="tensorboard_logdir" value="outputs/tensorboard"></label>
+            <label class="check-field"><input name="amp" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>CUDA AMP</strong><small>Use mixed precision on a compatible GPU</small></span></label>
+            <div class="form-actions"><button class="button primary" type="submit">Start training</button><button class="button danger" type="button" data-stop="pipeline">Stop pipeline</button></div>
+          </form>
+        </article>
+      </section>
+
+      <section id="infer" class="page-section host-only">
+        <div class="section-heading"><div><p class="eyebrow">Workflow 04</p><h1>Inference</h1></div><p class="lede">Run accepted crops, complete videos, or a live source through the same Layer 2 checkpoint.</p></div>
+        <div class="two-column">
+          <article class="panel"><div class="panel-heading"><div><h2>Video</h2></div></div><form class="action-form form-grid one" data-action="infer_video">
+            <label class="field"><span>Video</span><input name="video" required></label><label class="field"><span>Checkpoint</span><input name="checkpoint" required></label><label class="field"><span>Output CSV</span><input name="output" value="outputs/predictions.csv" required></label><label class="field"><span>Extraction config</span><input name="config" value="configs/default.yaml" required></label><label class="field"><span>Device</span><input name="device" value="auto"></label><label class="field"><span>Recall-priority class</span><select name="decision_class"><option>argmax</option><option>right</option><option>left</option></select></label><label class="field"><span>Decision threshold</span><input name="decision_threshold" type="number" value="0.5" min="0" max="1" step="0.01"></label><div class="form-actions"><button class="button primary" type="submit">Run video</button></div>
+          </form></article>
+          <article class="panel"><div class="panel-heading"><div><h2>Existing crops</h2></div></div><form class="action-form form-grid one" data-action="infer_images">
+            <label class="field"><span>Image or directory</span><input name="input" required></label><label class="field"><span>Checkpoint</span><input name="checkpoint" required></label><label class="field"><span>Output CSV</span><input name="output" value="outputs/image_predictions.csv" required></label><label class="field"><span>Device</span><input name="device" value="auto"></label><label class="field"><span>Recall-priority class</span><select name="decision_class"><option>argmax</option><option>right</option><option>left</option></select></label><label class="field"><span>Decision threshold</span><input name="decision_threshold" type="number" value="0.5" min="0" max="1" step="0.01"></label><div class="form-actions"><button class="button primary" type="submit">Classify crops</button></div>
+          </form></article>
+        </div>
+        <article class="panel"><div class="panel-heading"><div><h2>Live source</h2><p>Camera index or OpenCV-compatible stream.</p></div></div><form class="action-form form-grid" data-action="infer_live">
+          <label class="field"><span>Source</span><input name="source" value="0" required></label><label class="field"><span>Checkpoint</span><input name="checkpoint" required></label><label class="field"><span>Output JSONL</span><input name="output" value="outputs/live_events.jsonl" required></label><label class="field"><span>Extraction config</span><input name="config" value="configs/default.yaml" required></label><label class="field"><span>Device</span><input name="device" value="auto"></label><label class="field"><span>Recall-priority class</span><select name="decision_class"><option>argmax</option><option>right</option><option>left</option></select></label><label class="field"><span>Decision threshold</span><input name="decision_threshold" type="number" value="0.5" min="0" max="1" step="0.01"></label><label class="check-field"><input name="amp" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>CUDA AMP</strong><small>Mixed precision for live classification</small></span></label><div class="form-actions"><button class="button primary" type="submit">Start live inference</button><button class="button danger" type="button" data-stop="pipeline">Stop</button></div>
+        </form></article>
+      </section>
+
+      <section id="explain" class="page-section host-only">
+        <div class="section-heading"><div><p class="eyebrow">Workflow 05</p><h1>Explain one decision</h1></div><p class="lede">Generate architecture-neutral SmoothGrad or occlusion evidence for an accepted crop.</p></div>
+        <article class="panel"><form class="action-form form-grid" data-action="explain">
+          <label class="field"><span>Accepted crop</span><input name="image" required></label><label class="field"><span>Checkpoint</span><input name="checkpoint" required></label><label class="field"><span>Overlay output</span><input name="output" value="outputs/explanations/example.png" required></label><label class="field"><span>Device</span><input name="device" value="auto"></label><label class="field"><span>Method</span><select name="method"><option>smoothgrad</option><option>occlusion</option></select></label><label class="field"><span>Target class</span><select name="target_class"><option>predicted</option><option>right</option><option>left</option></select></label><div class="form-actions"><button class="button primary" type="submit">Generate explanation</button></div>
+        </form></article>
+      </section>
+
+      <section id="compare" class="page-section">
+        <div class="section-heading"><div><p class="eyebrow">Evaluation</p><h1>Compare historical models</h1></div><p class="lede">Rank only runs with matching split IDs as direct architecture experiments.</p></div>
+        <article class="panel">
+          <div class="comparison-toolbar">
+            <label class="field grow host-only"><span>Metrics directory</span><span class="input-row"><input id="comparison-root" value="outputs"><button type="button" class="icon-button browse" data-target="comparison-root" data-kind="directory">Browse</button></span></label>
+            <label class="field"><span>Rank by</span><select id="comparison-metric">{% for metric in comparison_metrics %}<option value="{{ metric }}">{{ metric|replace('_', ' ') }}</option>{% endfor %}</select></label>
+            <button id="refresh-comparison" class="button primary" type="button">Refresh</button>
+          </div>
+          <div class="table-scroll" role="region" aria-label="Historical model comparison" tabindex="0">
+            <table><thead><tr><th>Model</th><th>Augmentation</th><th>Split</th><th>Accuracy</th><th>Macro recall</th><th>Macro F1</th><th>Left recall</th><th>Right recall</th><th>Val N</th><th>Artifact</th></tr></thead><tbody id="comparison-body"><tr><td colspan="10" class="empty">Loading historical runs…</td></tr></tbody></table>
+          </div>
+        </article>
+      </section>
+
+      <section id="logs" class="page-section host-only">
+        <div class="section-heading"><div><p class="eyebrow">Execution</p><h1>Run log</h1></div><p class="lede">Exact local command and subprocess output. Paths and raw logs are never returned to LAN viewers.</p></div>
+        <article class="panel log-panel"><div class="log-toolbar"><button class="button danger" type="button" data-stop="pipeline">Stop pipeline</button><button class="button danger" type="button" data-stop="tensorboard">Stop TensorBoard</button><button class="button" id="clear-log" type="button">Clear view</button></div><pre id="run-log" aria-live="polite">Waiting for a local command…</pre></article>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+
+  <dialog id="path-dialog">
+    <div class="dialog-heading"><div><p class="eyebrow">Host filesystem</p><h2>Select a path</h2></div><button id="path-close" class="icon-button" type="button" aria-label="Close path browser">Close</button></div>
+    <div class="path-location"><button id="path-parent" class="button" type="button">Up</button><code id="path-current"></code></div>
+    <div id="path-entries" class="path-entries"></div>
+    <div class="dialog-actions"><button id="path-use-folder" class="button primary" type="button">Use this folder</button></div>
+  </dialog>
+</body>
+</html>

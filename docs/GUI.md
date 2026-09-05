@@ -1,6 +1,6 @@
-# Desktop GUI
+# Browser workstation
 
-The project includes a lightweight Tkinter interface that calls the same tested CLI used by scripts and deployment. It does not reimplement extraction, training, or inference logic.
+The primary interface is a responsive Flask/Waitress browser application that calls the same tested CLI used by scripts and deployment. It does not reimplement extraction, training, or inference logic.
 
 ## Launch
 
@@ -14,10 +14,30 @@ glove-pipeline-gui
 Equivalent module command:
 
 ```bash
-python -m glove_chirality.gui
+python -m glove_chirality.web_app
 ```
 
-Tkinter ships with standard Windows Python installations, so no web server or additional GUI framework is required.
+The server binds to `127.0.0.1` by default and opens the host browser. The previous Tkinter application remains available during migration as `glove-pipeline-tk`.
+
+### Read-only viewing from another device
+
+On a trusted private network, opt in explicitly:
+
+```bash
+glove-pipeline-gui --lan
+```
+
+The host terminal prints two URLs. Open the complete LAN viewer URL on the phone, tablet, or second computer; its access token is carried in the URL fragment, removed from the address immediately by the browser, and then sent only in the API header.
+
+LAN clients can view process state and historical comparison metrics. They cannot:
+
+- browse or submit host filesystem paths;
+- read raw command logs;
+- edit extraction YAML;
+- start or stop extraction, training, inference, or TensorBoard;
+- open the host-only TensorBoard server.
+
+These restrictions are enforced by the server, not only hidden in the page. LAN mode uses HTTP and is intended only for a trusted private network; do not expose it through port forwarding or a public interface.
 
 ## Tabs
 
@@ -26,7 +46,7 @@ Tkinter ships with standard Windows Python installations, so no web server or ad
 - Select left-only and right-only video directories and build one labeled dataset.
 - Process one video or a complete directory with `left`, `right`, or `unknown` provenance.
 - Render a calibration preview at a selected timestamp.
-- Select the output directory and extraction YAML with native file dialogs.
+- Select host files/directories with the server-side path browser or type a host path directly.
 
 ### 2 · Layer 1
 
@@ -45,7 +65,7 @@ Edit the most frequently calibrated parameters:
 - rejection of frames containing multiple simultaneous candidates;
 - crop padding, `bbox`/`masked`/`masked_fill` mode, square policy, and fixed output size.
 
-Load an existing YAML, save changes in place, or save a new copy. Advanced YAML values that are not shown remain intact when editing an existing configuration.
+Load an existing YAML into the host editor, validate it against `ExtractionConfig`, and save it in place or to a new host path.
 
 #### Use a collaborator's custom YOLO11n-seg model
 
@@ -56,11 +76,11 @@ The detector checkpoint and chirality-classifier checkpoint are separate:
 
 To configure Layer 1 without hand-editing YAML:
 
-1. Open **2 · Layer 1**.
-2. Under **Layer 1 — YOLO11n-seg glove model**, click **Browse…** and choose the trained segmentation checkpoint, normally `best.pt`.
-3. The GUI automatically selects the `yolo` backend, sets glove class ID `0`, enables masks, requires segmentation output, and enables ROI-only inference.
-4. If the annotation platform assigned glove a different class index, change **Glove class ID** to match its dataset class list.
-5. Choose the YOLO device (`auto`, `cpu`, `cuda`, or `cuda:0`) and save the configuration, preferably with **Save as…**.
+1. Open **Layer 1** and load the extraction YAML.
+2. Choose the trained segmentation checkpoint, normally `best.pt`, in **Custom YOLO segmentation checkpoint**.
+3. Click **Apply YOLO preset**. The editor selects the `yolo` backend, sets glove class ID `0`, enables and requires masks, and enables ROI-only inference without saving yet.
+4. If the annotation platform assigned glove a different class index, edit `yolo_class_id` to match its dataset class list.
+5. Review the YAML, choose the YOLO device (`auto`, `cpu`, `cuda`, or `cuda:0`), then click **Validate & save**.
 6. Use **Calibration preview** on representative video timestamps before extracting a dataset or starting live inference.
 
 The default config intentionally contains no generic YOLO checkpoint. Stock COCO `yolo11n.pt` is not a glove detector. A box-only model also fails when strict masks are enabled, instead of silently changing crop behavior.
@@ -154,9 +174,9 @@ glove-pipeline compare-models \
 
 ## Execution behavior
 
-Pipeline commands run in a background subprocess so the window remains responsive. Training, extraction, and inference remain mutually exclusive to avoid accidental GPU/camera contention, while TensorBoard has a separate concurrent process slot. The Run log labels output by process. **Stop pipeline** and **Stop TensorBoard** affect only their respective process; **Clear** clears the visible log.
+Pipeline commands run in background subprocesses so HTTP requests and the browser remain responsive. Training, extraction, and inference remain mutually exclusive to avoid accidental GPU/camera contention, while TensorBoard has a separate concurrent process slot. The host-only Run log labels output by process. **Stop pipeline** and **Stop TensorBoard** affect only their respective process; **Clear** clears the visible log.
 
-The five workflow forms have persistent vertical scrollbars and follow the mouse wheel on the active tab, so every control remains reachable on smaller displays. The **Compare** table has independent vertical and horizontal scrollbars for wide metric archives; the **Run log** retains its own text scrollbar.
+The browser layout adapts from a fixed research-workstation sidebar to a touch-friendly bottom navigation on phones. Forms collapse to one column, metric cards to two columns, and wide comparison tables remain horizontally scrollable. Checkbox selections render as explicit ✓ ticks rather than X marks.
 
 The GUI does not hide errors or fabricate success. The final subprocess exit code is written to the log.
 

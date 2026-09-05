@@ -10,7 +10,13 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Chathuka Elapatha"}]
-dependencies = ["numpy>=1.24", "opencv-python>=4.8", "PyYAML>=6.0"]
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "PyYAML>=6.0",
+    "Flask>=3.1",
+    "waitress>=3.0",
+]
 
 [project.optional-dependencies]
 ml = ["torch>=2.2", "torchvision>=0.17", "timm>=1.0.20", "tensorboard>=2.16"]
@@ -20,7 +26,12 @@ all = ["torch>=2.2", "torchvision>=0.17", "timm>=1.0.20", "tensorboard>=2.16", "
 
 [project.scripts]
 glove-pipeline = "glove_chirality.cli:main"
-glove-pipeline-gui = "glove_chirality.gui:main"
+glove-pipeline-gui = "glove_chirality.web_app:main"
+glove-pipeline-web = "glove_chirality.web_app:main"
+glove-pipeline-tk = "glove_chirality.gui:main"
+
+[tool.setuptools.package-data]
+glove_chirality = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

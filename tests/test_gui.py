@@ -1,8 +1,8 @@
 import pytest
 
-from glove_chirality.gui import (
+from glove_chirality.gui import mousewheel_units
+from glove_chirality.ui_presets import (
     custom_yolo_segmentation_preset,
-    mousewheel_units,
     tight_detection_crop_preset,
 )
 

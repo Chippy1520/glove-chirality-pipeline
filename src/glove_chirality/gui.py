@@ -19,8 +19,10 @@ from glove_chirality.comparison import (
 from glove_chirality.config import ExtractionConfig
 from glove_chirality.gui_processes import ProcessSlots
 from glove_chirality.models import CLASSIFIER_CHOICES
-
-CUSTOM_YOLO_SUFFIXES = {".pt", ".pth", ".onnx", ".engine", ".torchscript"}
+from glove_chirality.ui_presets import (
+    custom_yolo_segmentation_preset,
+    tight_detection_crop_preset,
+)
 
 
 def mousewheel_units(delta: int) -> int:
@@ -29,33 +31,6 @@ def mousewheel_units(delta: int) -> int:
         return 0
     magnitude = max(1, abs(delta) // 120)
     return -magnitude if delta > 0 else magnitude
-
-
-def tight_detection_crop_preset() -> dict[str, object]:
-    """Use the selected detector box without padding or square expansion."""
-    return {
-        "crop_padding": 0.0,
-        "make_square": False,
-        "crop_mode": "bbox",
-    }
-
-
-def custom_yolo_segmentation_preset(model_path: str | Path) -> dict[str, object]:
-    """Return safe Layer-1 defaults for a selected custom glove segmenter."""
-    path = Path(model_path).expanduser()
-    if not path.is_file():
-        raise ValueError(f"Custom YOLO model not found: {path}")
-    if path.suffix.lower() not in CUSTOM_YOLO_SUFFIXES:
-        supported = ", ".join(sorted(CUSTOM_YOLO_SUFFIXES))
-        raise ValueError(f"Unsupported YOLO model format {path.suffix!r}; use {supported}")
-    return {
-        "backend": "yolo",
-        "yolo_model": str(path.resolve()),
-        "yolo_class_id": 0,
-        "yolo_use_masks": True,
-        "yolo_require_masks": True,
-        "yolo_crop_to_roi": True,
-    }
 
 
 def main(argv: list[str] | None = None) -> None:

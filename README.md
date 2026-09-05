@@ -6,15 +6,20 @@ The central design rule is that dataset creation and deployment call the **same 
 
 For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md), [`docs/CAMERA_CALIBRATION.md`](docs/CAMERA_CALIBRATION.md), [`docs/DETECTOR_MODEL_OPTIONS.md`](docs/DETECTOR_MODEL_OPTIONS.md), and [`docs/CLASSIFIER_MODEL_OPTIONS.md`](docs/CLASSIFIER_MODEL_OPTIONS.md).
 
-## Lightweight desktop GUI
+## Browser workstation
 
-Launch the Tkinter interface after installation:
+Launch the responsive browser workstation after installation:
 
 ```bash
 glove-pipeline-gui
 ```
 
-It provides explicit Layer-1 YOLO11n-seg checkpoint/configuration controls, extraction and calibration workflows, Layer-2 model/GPU training, concurrent TensorBoard access, chirality-safe anti-spurious augmentation, image/video/live inference, per-image explanation maps, historical model comparison, and live process logs. It calls the same CLI backend, so GUI and scripted runs remain reproducible. See [`docs/GUI.md`](docs/GUI.md).
+It provides host-only extraction/configuration/training controls, concurrent local TensorBoard, image/video/live inference, explanations, historical model comparison, and live logs. The layout works on desktop, tablet, and mobile. Optional authenticated LAN mode gives other devices a read-only status/comparison view while filesystem paths, raw logs, TensorBoard, and all mutations remain on the host. It calls the same CLI backend, so browser and scripted runs remain reproducible. See [`docs/GUI.md`](docs/GUI.md).
+
+```bash
+# Optional read-only viewer for other devices on the same trusted LAN
+glove-pipeline-gui --lan
+```
 
 ## Pipeline
 

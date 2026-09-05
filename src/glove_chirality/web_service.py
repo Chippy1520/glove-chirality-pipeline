@@ -8,7 +8,7 @@ import threading
 import uuid
 from collections import deque
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -236,7 +236,7 @@ class CommandService:
                 job_id=uuid.uuid4().hex,
                 action=action or slot,
                 status="running",
-                started_at=datetime.now(UTC).isoformat(),
+                started_at=datetime.now(timezone.utc).isoformat(),
             )
             self._jobs[slot] = job
             self._append(slot, "$ " + subprocess.list2cmdline(command))
@@ -253,7 +253,7 @@ class CommandService:
                         job.status = "cancelled"
                     else:
                         job.status = "succeeded" if code == 0 else "failed"
-                    job.finished_at = datetime.now(UTC).isoformat()
+                    job.finished_at = datetime.now(timezone.utc).isoformat()
                     job.exit_code = code
             self._append(slot, f"Process finished with exit code {code}.")
 

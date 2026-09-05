@@ -156,6 +156,8 @@ glove-pipeline compare-models \
 
 Pipeline commands run in a background subprocess so the window remains responsive. Training, extraction, and inference remain mutually exclusive to avoid accidental GPU/camera contention, while TensorBoard has a separate concurrent process slot. The Run log labels output by process. **Stop pipeline** and **Stop TensorBoard** affect only their respective process; **Clear** clears the visible log.
 
+The five workflow forms have persistent vertical scrollbars and follow the mouse wheel on the active tab, so every control remains reachable on smaller displays. The **Compare** table has independent vertical and horizontal scrollbars for wide metric archives; the **Run log** retains its own text scrollbar.
+
 The GUI does not hide errors or fabricate success. The final subprocess exit code is written to the log.
 
 ## Recommended workflow with real data

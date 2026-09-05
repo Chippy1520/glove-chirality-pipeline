@@ -23,6 +23,14 @@ from glove_chirality.models import CLASSIFIER_CHOICES
 CUSTOM_YOLO_SUFFIXES = {".pt", ".pth", ".onnx", ".engine", ".torchscript"}
 
 
+def mousewheel_units(delta: int) -> int:
+    """Translate a Tk/Windows mouse-wheel delta into canvas scroll units."""
+    if delta == 0:
+        return 0
+    magnitude = max(1, abs(delta) // 120)
+    return -magnitude if delta > 0 else magnitude
+
+
 def tight_detection_crop_preset() -> dict[str, object]:
     """Use the selected detector box without padding or square expansion."""
     return {
@@ -90,11 +98,14 @@ def main(argv: list[str] | None = None) -> None:
             ).pack(anchor="w")
             self.notebook = ttk.Notebook(root)
             self.notebook.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+            self._scroll_canvases = {}
             self._extraction_tab(tk, ttk, filedialog, messagebox)
             self._settings_tab(tk, ttk, filedialog, messagebox)
             self._training_tab(tk, ttk, filedialog, messagebox)
             self._inference_tab(tk, ttk, filedialog, messagebox)
             self._analysis_tab(tk, ttk, filedialog, messagebox)
+            for canvas in self._scroll_canvases.values():
+                self._bind_scroll_wheel(canvas)
             self._comparison_tab(tk, ttk, filedialog, messagebox)
             self._log_panel(tk, ttk, scrolledtext)
             self.root.protocol("WM_DELETE_WINDOW", self._close)
@@ -176,6 +187,55 @@ def main(argv: list[str] | None = None) -> None:
             parent.columnconfigure(1, weight=1)
             return entry
 
+        def _scrollable_tab(self, tk_module, ttk_module, title, padding=10):
+            container = ttk_module.Frame(self.notebook)
+            self.notebook.add(container, text=title)
+            canvas = tk_module.Canvas(
+                container,
+                background="#f4f7fb",
+                borderwidth=0,
+                highlightthickness=0,
+            )
+            scrollbar = ttk_module.Scrollbar(
+                container,
+                orient="vertical",
+                command=canvas.yview,
+            )
+            canvas.configure(yscrollcommand=scrollbar.set)
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+
+            content = ttk_module.Frame(canvas, padding=padding)
+            window = canvas.create_window((0, 0), window=content, anchor="nw")
+            content.bind(
+                "<Configure>",
+                lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+            )
+            canvas.bind(
+                "<Configure>",
+                lambda event: canvas.itemconfigure(window, width=event.width),
+            )
+            self._scroll_canvases[str(container)] = canvas
+            return content
+
+        def _scroll_active_tab(self, event):
+            canvas = self._scroll_canvases.get(self.notebook.select())
+            if canvas is None:
+                return None
+            bounds = canvas.bbox("all")
+            if bounds is None or bounds[3] <= canvas.winfo_height():
+                return None
+            units = mousewheel_units(event.delta)
+            if units == 0:
+                return None
+            canvas.yview_scroll(units, "units")
+            return "break"
+
+        def _bind_scroll_wheel(self, widget):
+            widget.bind("<MouseWheel>", self._scroll_active_tab, add="+")
+            for child in widget.winfo_children():
+                self._bind_scroll_wheel(child)
+
         def _path_row(
             self,
             parent,
@@ -239,8 +299,7 @@ def main(argv: list[str] | None = None) -> None:
             self._path_row(parent, ttk_module, filedialog_module, row, "Extraction config", self.config_path, "yaml")
 
         def _extraction_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
-            tab = ttk_module.Frame(self.notebook, padding=10)
-            self.notebook.add(tab, text="1 · Extract")
+            tab = self._scrollable_tab(tk_module, ttk_module, "1 · Extract")
             ttk_module.Label(tab, text="Video → representative glove crops", style="Title.TLabel").pack(anchor="w", pady=(0, 8))
 
             dataset = ttk_module.LabelFrame(tab, text="Labeled dataset from known streams", style="Section.TLabelframe", padding=8)
@@ -274,8 +333,7 @@ def main(argv: list[str] | None = None) -> None:
             ttk_module.Button(preview, text="Render preview", command=lambda: self._guard(messagebox_module, lambda: gui_commands.preview(self.preview_video.get(), self.preview_output.get(), self.preview_seconds.get(), self.config_path.get(), self.preview_warmup.get()))).grid(row=4, column=1, sticky="e", padx=8, pady=8)
 
         def _settings_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
-            tab = ttk_module.Frame(self.notebook, padding=10)
-            self.notebook.add(tab, text="2 · Layer 1")
+            tab = self._scrollable_tab(tk_module, ttk_module, "2 · Layer 1")
             ttk_module.Label(tab, text="Layer 1 detector, event selection, and crop settings", style="Title.TLabel").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
             self._path_row(tab, ttk_module, filedialog_module, 1, "Config file", self.config_path, "yaml")
 
@@ -454,8 +512,7 @@ def main(argv: list[str] | None = None) -> None:
                 self._load_settings(messagebox_module, quiet=True)
 
         def _training_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
-            tab = ttk_module.Frame(self.notebook, padding=10)
-            self.notebook.add(tab, text="3 · Train")
+            tab = self._scrollable_tab(tk_module, ttk_module, "3 · Train")
             ttk_module.Label(tab, text="Train an interchangeable chirality classifier", style="Title.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
             self.train_manifest, self.train_output = tk_module.StringVar(), tk_module.StringVar()
             self.train_model = tk_module.StringVar(value="resnet18")
@@ -565,8 +622,7 @@ def main(argv: list[str] | None = None) -> None:
             ).pack(side="left", padx=5)
 
         def _inference_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
-            tab = ttk_module.Frame(self.notebook, padding=10)
-            self.notebook.add(tab, text="4 · Infer")
+            tab = self._scrollable_tab(tk_module, ttk_module, "4 · Infer")
             ttk_module.Label(tab, text="Layer 2 — classify each accepted glove crop", style="Title.TLabel").pack(anchor="w", pady=(0, 8))
             self.infer_checkpoint, self.infer_device = tk_module.StringVar(), tk_module.StringVar(value="auto")
             self.infer_decision_class = tk_module.StringVar(value="argmax")
@@ -610,8 +666,7 @@ def main(argv: list[str] | None = None) -> None:
             ttk_module.Button(images, text="Classify images", command=lambda: self._guard(messagebox_module, lambda: gui_commands.infer_images(self.infer_images_input.get(), self.infer_checkpoint.get(), self.infer_images_output.get(), self.infer_device.get(), self.infer_decision_class.get(), self.infer_decision_threshold.get()))).grid(row=2, column=1, sticky="e", padx=8, pady=8)
 
         def _analysis_tab(self, tk_module, ttk_module, filedialog_module, messagebox_module):
-            tab = ttk_module.Frame(self.notebook, padding=14)
-            self.notebook.add(tab, text="5 · Explain")
+            tab = self._scrollable_tab(tk_module, ttk_module, "5 · Explain")
             ttk_module.Label(
                 tab,
                 text="Inspect individual classifier decisions",
@@ -1086,10 +1141,16 @@ def main(argv: list[str] | None = None) -> None:
             self.log.configure(state="disabled")
 
     root = tk.Tk()
-    App(root)
+    app = App(root)
     if args.smoke_test:
         root.update_idletasks()
         root.update()
+        if len(app._scroll_canvases) != 5:
+            raise RuntimeError("Expected five scrollable workflow tabs")
+        if not all(canvas.cget("yscrollcommand") for canvas in app._scroll_canvases.values()):
+            raise RuntimeError("A workflow tab is missing its vertical scroll command")
+        if not all(canvas.bind("<MouseWheel>") for canvas in app._scroll_canvases.values()):
+            raise RuntimeError("A workflow tab is missing its mouse-wheel binding")
         root.destroy()
         return
     root.mainloop()

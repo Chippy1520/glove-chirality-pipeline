@@ -2,6 +2,7 @@ import pytest
 
 from glove_chirality.gui import (
     custom_yolo_segmentation_preset,
+    mousewheel_units,
     tight_detection_crop_preset,
 )
 
@@ -28,6 +29,14 @@ def test_tight_detection_crop_preset_uses_selected_box_without_expansion():
         "make_square": False,
         "crop_mode": "bbox",
     }
+
+
+def test_mousewheel_units_supports_single_and_high_resolution_deltas():
+    assert mousewheel_units(120) == -1
+    assert mousewheel_units(-120) == 1
+    assert mousewheel_units(240) == -2
+    assert mousewheel_units(-30) == 1
+    assert mousewheel_units(0) == 0
 
 
 def test_custom_yolo_preset_rejects_missing_or_unsupported_files(tmp_path):

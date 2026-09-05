@@ -48,7 +48,11 @@ def test_tensorboard_uses_independent_process_slot():
     assert command[command.index("--port") + 1] == "6010"
 
 
-def test_tensorboard_start_rejects_missing_log_directory(tmp_path):
+def test_tensorboard_start_rejects_missing_log_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "glove_chirality.web_service.importlib.util.find_spec",
+        lambda _name: object(),
+    )
     service = CommandService(tmp_path)
     slot, command = build_web_command(
         "tensorboard",
@@ -59,7 +63,11 @@ def test_tensorboard_start_rejects_missing_log_directory(tmp_path):
         service.start(slot, command, action="tensorboard")
 
 
-def test_tensorboard_start_rejects_occupied_port(tmp_path):
+def test_tensorboard_start_rejects_occupied_port(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "glove_chirality.web_service.importlib.util.find_spec",
+        lambda _name: object(),
+    )
     (tmp_path / "tb").mkdir()
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
@@ -74,6 +82,22 @@ def test_tensorboard_start_rejects_occupied_port(tmp_path):
             service.start(slot, command, action="tensorboard")
     finally:
         listener.close()
+
+
+def test_tensorboard_start_rejects_missing_package(tmp_path, monkeypatch):
+    (tmp_path / "tb").mkdir()
+    monkeypatch.setattr(
+        "glove_chirality.web_service.importlib.util.find_spec",
+        lambda _name: None,
+    )
+    service = CommandService(tmp_path)
+    slot, command = build_web_command(
+        "tensorboard",
+        {"logdir": "tb", "port": 6010},
+    )
+
+    with pytest.raises(ValueError, match="not installed"):
+        service.start(slot, command, action="tensorboard")
 
 
 def test_unknown_action_cannot_become_an_arbitrary_command():

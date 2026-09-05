@@ -152,6 +152,7 @@ Use `pytest`; parameterize frame-boundary cases and seed random/property tests.
 - [ ] Host controls reject non-loopback peers and untrusted Host/Origin values.
 - [ ] LAN mode is opt-in; unauthenticated LAN API requests are rejected and the token is never placed in an HTTP query string.
 - [ ] The private-interface LAN app registers only shell, health, sanitized state, and redacted comparison routes.
+- [ ] The host-only QR decodes to the exact fragment-token viewer URL and its endpoint is absent from the LAN route table.
 - [ ] Pipeline and TensorBoard process slots remain independent, atomically reject duplicate starts, retain bounded logs, and release after completion.
 - [ ] TensorBoard rejects missing log directories and occupied ports before launch and remains loopback-only.
 - [ ] Desktop and narrow viewport captures have no horizontal clipping; comparison tables retain intentional horizontal scrolling.

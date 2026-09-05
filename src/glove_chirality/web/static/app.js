@@ -63,6 +63,15 @@
     $$('[data-stop="pipeline"]').forEach((button) => { button.disabled = !pipeline; });
     $$('[data-stop="tensorboard"]').forEach((button) => { button.disabled = !tensorboard; });
 
+    const sharePanel = $("#lan-share-panel");
+    const viewerUrl = payload.can_edit ? payload.lan_viewer_url : null;
+    sharePanel.hidden = !viewerUrl;
+    if (viewerUrl) {
+      $("#lan-viewer-url").textContent = viewerUrl;
+      const qr = $("#lan-viewer-qr");
+      if (!qr.getAttribute("src")) qr.src = "/api/lan/qr.png";
+    }
+
     if (payload.can_edit) {
       const lines = payload.logs
         .filter((entry) => entry.sequence > state.logFloor)
@@ -233,6 +242,15 @@
 
   $("#refresh-comparison").addEventListener("click", loadComparison);
   $("#comparison-metric").addEventListener("change", loadComparison);
+  $("#copy-lan-url").addEventListener("click", async () => {
+    const viewerUrl = $("#lan-viewer-url").textContent;
+    try {
+      await navigator.clipboard.writeText(viewerUrl);
+      toast("Viewer link copied.");
+    } catch (_error) {
+      toast("Could not copy automatically. Select the displayed link instead.", true);
+    }
+  });
 
   const pathDialog = $("#path-dialog");
   let pathTarget = null;

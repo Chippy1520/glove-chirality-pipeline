@@ -14,7 +14,7 @@ Launch the responsive browser workstation after installation:
 glove-pipeline-gui
 ```
 
-It provides host-only extraction/configuration/training controls, concurrent local TensorBoard, image/video/live inference, explanations, historical model comparison, and live logs. The layout works on desktop, tablet, and mobile. Optional authenticated LAN mode starts a separate read-only viewer on port `8766`; that application has no mutation, filesystem, raw-log, or TensorBoard routes. The controller remains loopback-only on port `8765`. It calls the same CLI backend, so browser and scripted runs remain reproducible. See [`docs/GUI.md`](docs/GUI.md).
+It provides host-only extraction/configuration/training controls, concurrent local TensorBoard, image/video/live inference, explanations, historical model comparison, and live logs. The layout works on desktop, tablet, and mobile. Optional authenticated LAN mode starts a separate read-only viewer on port `8766` and displays its QR code on the host; that application has no mutation, filesystem, raw-log, or TensorBoard routes. The controller remains loopback-only on port `8765`. It calls the same CLI backend, so browser and scripted runs remain reproducible. See [`docs/GUI.md`](docs/GUI.md).
 
 ```bash
 # Optional read-only viewer for other devices on the same trusted LAN

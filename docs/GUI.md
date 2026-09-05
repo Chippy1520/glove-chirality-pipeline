@@ -29,7 +29,7 @@ glove-pipeline-gui --lan
 glove-pipeline-gui --lan --lan-port 8877
 ```
 
-The host terminal prints two URLs. Host controls remain on `127.0.0.1:8765`; a structurally separate read-only application binds to the detected private interface on port `8766` by default. Open the complete viewer URL on the phone, tablet, or second computer; its access token is carried in the URL fragment, removed from the address immediately by the browser, and then sent only in the API header.
+The host terminal prints two URLs. Host controls remain on `127.0.0.1:8765`; a structurally separate read-only application binds to the detected private interface on port `8766` by default. The host overview also shows a scannable QR code and copyable viewer link. The access token is carried in the URL fragment, removed from the address immediately by the viewer browser, and then sent only in the API header. Treat the QR code like the viewer password and share it only with intended observers.
 
 LAN clients can view process state and historical comparison metrics. They cannot:
 

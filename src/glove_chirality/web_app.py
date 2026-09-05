@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import cv2
 import yaml
-from flask import Flask, abort, jsonify, render_template, request
+from flask import Flask, Response, abort, jsonify, render_template, request
 
 from glove_chirality.comparison import COMPARISON_METRICS
 from glove_chirality.config import ExtractionConfig
@@ -71,10 +72,21 @@ def _secure_response(response):
     return response
 
 
+def _qr_png(value: str) -> bytes:
+    image = cv2.QRCodeEncoder_create().encode(value)
+    image = cv2.copyMakeBorder(image, 3, 3, 3, 3, cv2.BORDER_CONSTANT, value=255)
+    image = cv2.resize(image, None, fx=8, fy=8, interpolation=cv2.INTER_NEAREST)
+    encoded, data = cv2.imencode(".png", image)
+    if not encoded:
+        raise RuntimeError("Could not encode LAN viewer QR code")
+    return data.tobytes()
+
+
 def create_app(
     service: CommandService,
     *,
     lan_enabled: bool = False,
+    lan_viewer_url: str | None = None,
 ) -> Flask:
     """Create the loopback-only host controller application."""
     app = Flask(
@@ -85,6 +97,7 @@ def create_app(
     app.config.update(
         COMMAND_SERVICE=service,
         LAN_ENABLED=lan_enabled,
+        LAN_VIEWER_URL=lan_viewer_url,
     )
 
     def local_request() -> bool:
@@ -144,9 +157,18 @@ def create_app(
         snapshot.update(
             can_edit=True,
             lan_enabled=bool(app.config["LAN_ENABLED"]),
+            lan_viewer_url=app.config["LAN_VIEWER_URL"],
             comparison_root=str(service.comparison_root),
         )
         return jsonify(snapshot)
+
+    @app.get("/api/lan/qr.png")
+    @host_only
+    def lan_qr():
+        url = app.config["LAN_VIEWER_URL"]
+        if not url:
+            abort(404, description="LAN viewer is not enabled")
+        return Response(_qr_png(url), mimetype="image/png")
 
     @app.post("/api/run")
     @host_only
@@ -302,7 +324,12 @@ def create_viewer_app(service: CommandService, *, lan_token: str) -> Flask:
     @app.get("/api/state")
     def state():
         snapshot = service.snapshot(include_logs=False)
-        snapshot.update(can_edit=False, lan_enabled=True, comparison_root=None)
+        snapshot.update(
+            can_edit=False,
+            lan_enabled=True,
+            lan_viewer_url=None,
+            comparison_root=None,
+        )
         return jsonify(snapshot)
 
     @app.get("/api/comparison")
@@ -350,7 +377,19 @@ def main(argv: list[str] | None = None) -> None:
 
     token = args.token or (secrets.token_urlsafe(18) if args.lan else "")
     service = CommandService(args.workdir)
-    app = create_app(service, lan_enabled=args.lan)
+    lan_address = ""
+    lan_viewer_url = None
+    if args.lan and not args.smoke_test:
+        lan_address = _lan_address()
+        address = ipaddress.ip_address(lan_address)
+        if not address.is_private or address.is_loopback:
+            raise RuntimeError(f"No private LAN interface found: {lan_address}")
+        lan_viewer_url = f"http://{lan_address}:{args.lan_port}/#token={token}"
+    app = create_app(
+        service,
+        lan_enabled=args.lan,
+        lan_viewer_url=lan_viewer_url,
+    )
     viewer_app = create_viewer_app(service, lan_token=token) if args.lan else None
     if args.smoke_test:
         client = app.test_client()
@@ -365,16 +404,8 @@ def main(argv: list[str] | None = None) -> None:
 
     local_url = f"http://127.0.0.1:{args.port}"
     print(f"GRIP host controls: {local_url}", flush=True)
-    lan_address = ""
     if args.lan:
-        lan_address = _lan_address()
-        address = ipaddress.ip_address(lan_address)
-        if not address.is_private or address.is_loopback:
-            raise RuntimeError(f"No private LAN interface found: {lan_address}")
-        print(
-            f"GRIP LAN viewer: http://{lan_address}:{args.lan_port}/#token={token}",
-            flush=True,
-        )
+        print(f"GRIP LAN viewer: {lan_viewer_url}", flush=True)
         print("LAN clients are read-only; host paths, raw logs, and actions stay local.", flush=True)
     if not args.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(local_url)).start()

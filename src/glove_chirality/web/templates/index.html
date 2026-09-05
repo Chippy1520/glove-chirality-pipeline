@@ -50,6 +50,18 @@
           <article class="metric-card"><span>Priority metric</span><strong>Right recall</strong><small>Review with left false alarms</small></article>
         </div>
 
+        <article id="lan-share-panel" class="panel qr-panel host-only" hidden>
+          <div class="qr-copy">
+            <p class="eyebrow">Read-only LAN access</p>
+            <h2>Open this viewer on another device</h2>
+            <p>Scan the QR code with a phone or tablet connected to the same trusted private network.</p>
+            <code id="lan-viewer-url"></code>
+            <button id="copy-lan-url" class="button" type="button">Copy viewer link</button>
+            <p class="token-warning"><strong>Access token included.</strong> Anyone with this link or QR code can view sanitized run state and comparison metrics until this server stops.</p>
+          </div>
+          <img id="lan-viewer-qr" alt="QR code for the authenticated read-only LAN viewer">
+        </article>
+
         <article class="panel host-only">
           <div class="panel-heading"><div><p class="eyebrow">Local diagnostics</p><h2>TensorBoard</h2></div><span class="local-chip">Host only</span></div>
           <form class="action-form compact-form" data-action="tensorboard">

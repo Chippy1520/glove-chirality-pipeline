@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 from glove_chirality.web_app import _is_loopback, create_app, create_viewer_app
@@ -50,6 +52,36 @@ def test_browser_shell_is_responsive_and_uses_tick_controls(app):
 def test_lan_mode_requires_nonempty_token(service):
     with pytest.raises(ValueError, match="non-empty access token"):
         create_viewer_app(service, lan_token="")
+
+
+def test_host_qr_round_trips_exact_viewer_url_and_is_absent_from_viewer(service):
+    viewer_url = "http://192.168.1.6:8766/#token=viewer-secret"
+    host = create_app(service, lan_enabled=True, lan_viewer_url=viewer_url)
+    host.config.update(TESTING=True)
+    viewer = create_viewer_app(service, lan_token="viewer-secret")
+    viewer.config.update(TESTING=True)
+
+    state = host.test_client().get("/api/state").get_json()
+    response = host.test_client().get("/api/lan/qr.png")
+    image = cv2.imdecode(np.frombuffer(response.data, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    decoded, _points, _straight = cv2.QRCodeDetector().detectAndDecode(image)
+    viewer_response = viewer.test_client().get(
+        "/api/lan/qr.png",
+        headers={"X-GRIP-Token": "viewer-secret"},
+    )
+
+    assert state["lan_viewer_url"] == viewer_url
+    assert response.status_code == 200
+    assert response.mimetype == "image/png"
+    assert decoded == viewer_url
+    assert viewer_response.status_code == 404
+
+
+def test_host_qr_is_unavailable_when_lan_viewer_is_disabled(service):
+    application = create_app(service)
+    application.config.update(TESTING=True)
+
+    assert application.test_client().get("/api/lan/qr.png").status_code == 404
 
 
 def test_loopback_detection_does_not_trust_lan_addresses():

@@ -114,7 +114,10 @@ Checkpoints store `fine_tuning`, `epoch`, `stage`, `head_learning_rate` and
 and per-epoch `history`; TensorBoard exposes `run/config`, `training/stage` and
 `training/*_learning_rate`. Effective backbone LR is logged as zero while frozen.
 The selected checkpoint may still be a warm-up epoch: selection is global, not
-reset at unfreezing. No resume protocol or separate explicit-split script is changed.
+reset at unfreezing. No resume protocol is provided. Existing locked-directory
+benchmarks use the separate [explicit-split trainer](EXPLICIT_SPLIT_TRAINING.md),
+which has its own recovery preset and diagnostic stopping rules; do not resplit
+them using the standard training form.
 
 ## Practical interpretation
 

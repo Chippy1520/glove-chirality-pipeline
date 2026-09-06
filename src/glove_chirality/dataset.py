@@ -88,19 +88,20 @@ class ManifestDataset:
         training: bool,
         augmentation: str = "standard",
     ):
-        import cv2
-        from PIL import Image
-
-        self.cv2, self.Image, self.rows = cv2, Image, rows
+        self.rows = rows
         self.transform = build_image_transform(image_size, training, augmentation)
 
     def __len__(self):
         return len(self.rows)
 
     def __getitem__(self, index):
+        # Module objects cannot be pickled by Windows DataLoader spawn workers.
+        import cv2
+        from PIL import Image
+
         row = self.rows[index]
-        image = self.cv2.imread(row["absolute_path"])
+        image = cv2.imread(row["absolute_path"])
         if image is None:
             raise FileNotFoundError(row["absolute_path"])
-        image = self.cv2.cvtColor(image, self.cv2.COLOR_BGR2RGB)
-        return self.transform(self.Image.fromarray(image)), CLASSES.index(row["label"])
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        return self.transform(Image.fromarray(image)), CLASSES.index(row["label"])

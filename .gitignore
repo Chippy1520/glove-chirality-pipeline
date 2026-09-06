@@ -12,6 +12,7 @@ data/
 outputs/
 runs/
 checkpoints/
+*_Audit_Export/
 *.pt
 *.pth
 *.onnx

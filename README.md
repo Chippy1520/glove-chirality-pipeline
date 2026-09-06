@@ -226,6 +226,16 @@ stage and effective LRs (backbone LR zero while frozen). Checkpoint selection st
 compares **all** epochs, so the best checkpoint may come from warm-up. This is an
 optional experiment, not evidence of improved real-world accuracy.
 
+### Already locked train/validation directories
+
+For an existing explicit-split benchmark, use
+`python scripts/train_layer2_explicit_split.py --help` rather than creating a new
+grouped split in the standard trainer. The maintained entry point exposes staged
+fine-tuning, explicit precision controls, split-integrity checks and failure
+diagnostics. See [explicit-split recovery](docs/EXPLICIT_SPLIT_TRAINING.md).
+Use fresh output paths and preserve the original experiment; a saved checkpoint
+is not evidence that a collapsed classifier recovered.
+
 ## 5. Inference
 
 On pre-extracted images:

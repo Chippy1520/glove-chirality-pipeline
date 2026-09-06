@@ -3,12 +3,12 @@ import csv
 
 import numpy as np
 import pytest
-from PIL import Image
 
 
 def test_actual_training_loop_preserves_frozen_backbone_then_unfreezes(tmp_path, monkeypatch):
     torch = pytest.importorskip("torch")
     pytest.importorskip("torchvision")
+    Image = pytest.importorskip("PIL.Image")
     from glove_chirality import training
     from glove_chirality.models import build_model
 

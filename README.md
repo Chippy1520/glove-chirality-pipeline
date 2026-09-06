@@ -61,7 +61,7 @@ Offline extraction, offline video inference, and live inference all use the same
 - Optional separate polygon JSON files via `event.save_masks`; ordinary CSV files never embed large polygons.
 - Fixed-size, aspect-preserving crop export (`256x256` by default) shared by dataset, offline inference, and live inference.
 - Grouped train/validation split by source video to prevent adjacent-event leakage.
-- Interchangeable `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, `vit_b_16`, `swin_t`, `convnextv2_pico`, and `dinov3_convnext_tiny` classifiers.
+- Interchangeable `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, `vit_b_16`, `swin_t`, `convnextv2_pico`, `dinov3_convnext_tiny`, and `dinov3_vit_small` classifiers.
 - Optional TensorBoard metrics, `none`/`standard`/`anti_spurious` augmentation policies, and per-image SmoothGrad or occlusion-sensitivity explanation overlays.
 - Image inference and full video-to-event-to-prediction deployment commands.
 - `infer-live` with bounded latest-frame capture, stale-frame dropping, model warm-up, rolling performance metrics, and JSONL event output; classification runs once per accepted passage.
@@ -181,7 +181,7 @@ glove-pipeline train \
   --output checkpoints/resnet18_best.pt
 ```
 
-Choices: `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, `vit_b_16`.
+Choices: `tiny_cnn`, `resnet18`, `mobilenet_v3_small`, `vit_b_16`, `swin_t`, `convnextv2_pico`, `dinov3_convnext_tiny`, `dinov3_vit_small`. See [classifier options](docs/CLASSIFIER_MODEL_OPTIONS.md) for implementation identifiers and pretrained-weight licenses.
 
 `--device auto` uses CUDA when available; `cpu`, `cuda`, and `cuda:N` are explicit alternatives. `--amp` enables CUDA mixed precision. The split is by **source video**, not random images. Horizontal flipping is intentionally absent because a reflection can alter chirality semantics.
 
@@ -199,6 +199,32 @@ glove-pipeline train \
 ```
 
 The metrics sidecar records accuracy, macro recall/balanced accuracy, per-class precision and recall, macro-F1, and the confusion matrix. Increasing the recall penalty is not a substitute for source-grouped validation.
+
+### Optional staged fine-tuning
+
+```bash
+glove-pipeline train --manifest data/chirality_v1/manifest.csv \
+  --model dinov3_vit_small --epochs 20 --head-only-epochs 5 \
+  --learning-rate 0.001 --backbone-learning-rate 0.0001 \
+  --output checkpoints/dinov3_staged.pt
+```
+
+`--epochs` is the **total**: this example trains only the classification head for
+5 epochs, then all parameters for 15 epochs. The backbone is in evaluation mode
+during warm-up (including BatchNorm buffers/dropout). The head retains its learned
+weights and AdamW state when the backbone is unfrozen. `--learning-rate` remains
+the head LR; the backbone LR must be positive and strictly smaller. If omitted in
+staged mode, it defaults to one tenth of the head LR. Head-only epochs must be an
+integer from zero through total epochs minus one; total epochs must be positive.
+All LRs must be finite and positive.
+
+The default (`--head-only-epochs 0`, no backbone LR) preserves ordinary full-model
+training at one LR. Supplying just a backbone LR enables differential LRs from
+epoch one without freezing. Both Tk and browser training forms expose these options.
+Checkpoint metadata, the metrics JSON history, and TensorBoard record the config,
+stage and effective LRs (backbone LR zero while frozen). Checkpoint selection still
+compares **all** epochs, so the best checkpoint may come from warm-up. This is an
+optional experiment, not evidence of improved real-world accuracy.
 
 ## 5. Inference
 

@@ -8,11 +8,13 @@ CLASSIFIER_CHOICES = (
     "swin_t",
     "convnextv2_pico",
     "dinov3_convnext_tiny",
+    "dinov3_vit_small",
 )
 
 _TIMM_MODELS = {
     "convnextv2_pico": "convnextv2_pico.fcmae_ft_in1k",
     "dinov3_convnext_tiny": "convnext_tiny.dinov3_lvd1689m",
+    "dinov3_vit_small": "vit_small_patch16_dinov3.lvd1689m",
 }
 
 

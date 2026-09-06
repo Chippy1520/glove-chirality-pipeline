@@ -494,6 +494,8 @@ def main(argv: list[str] | None = None) -> None:
             self.train_device = tk_module.StringVar(value="auto")
             self.train_epochs, self.train_batch, self.train_size = tk_module.IntVar(value=20), tk_module.IntVar(value=32), tk_module.IntVar(value=224)
             self.train_lr, self.train_val = tk_module.DoubleVar(value=0.001), tk_module.DoubleVar(value=0.2)
+            self.train_head_epochs = tk_module.IntVar(value=0)
+            self.train_backbone_lr = tk_module.StringVar(value="")
             self.train_seed, self.train_workers = tk_module.IntVar(value=42), tk_module.IntVar(value=0)
             self.train_amp = tk_module.BooleanVar(value=False)
             self.train_loss = tk_module.StringVar(value="weighted_cross_entropy")
@@ -517,7 +519,9 @@ def main(argv: list[str] | None = None) -> None:
             fields = [
                 ("Model", self.train_model, CLASSIFIER_CHOICES),
                 ("Device", self.train_device, ("auto", "cpu", "cuda", "cuda:0", "cuda:1")),
-                ("Epochs", self.train_epochs, None), ("Batch size", self.train_batch, None),
+                ("Total epochs (both stages)", self.train_epochs, None), ("Batch size", self.train_batch, None),
+                ("Head-only epochs (0 = off)", self.train_head_epochs, None),
+                ("Backbone LR (blank = auto)", self.train_backbone_lr, None),
                 ("Image size", self.train_size, None), ("Learning rate", self.train_lr, None),
                 ("Validation fraction", self.train_val, None), ("Seed", self.train_seed, None),
                 ("DataLoader workers", self.train_workers, None),
@@ -592,6 +596,9 @@ def main(argv: list[str] | None = None) -> None:
                         self.train_selection_metric.get(),
                         self.train_augmentation.get(),
                         self.train_tensorboard.get(),
+                        head_only_epochs=self.train_head_epochs.get(),
+                        backbone_learning_rate=(float(self.train_backbone_lr.get())
+                                                if self.train_backbone_lr.get().strip() else None),
                     ),
                 ),
             ).pack(side="left", padx=5)

@@ -136,7 +136,9 @@
             <label class="field"><span>Checkpoint output</span><input name="output" value="outputs/models/classifier.pt" required></label>
             <label class="field"><span>Model</span><select name="model">{% for model in classifier_choices %}<option value="{{ model }}">{{ model }}</option>{% endfor %}</select></label>
             <label class="field"><span>Device</span><select name="device"><option>auto</option><option>cpu</option><option>cuda</option><option>cuda:0</option></select></label>
-            <label class="field"><span>Epochs</span><input name="epochs" type="number" value="20" min="1"></label>
+            <label class="field"><span>Total epochs (both stages)</span><input name="epochs" type="number" value="20" min="1"></label>
+            <label class="field"><span>Head-only epochs (0 = off; less than total)</span><input name="head_only_epochs" type="number" value="0" min="0" step="1"></label>
+            <label class="field"><span>Backbone LR (blank: head LR / 10 when staged)</span><input name="backbone_learning_rate" type="number" min="0" step="any" placeholder="Optional; below head LR"></label>
             <label class="field"><span>Batch size</span><input name="batch_size" type="number" value="32" min="1"></label>
             <label class="field"><span>Image size</span><input name="image_size" type="number" value="224" min="32"></label>
             <label class="field"><span>Learning rate</span><input name="learning_rate" type="number" value="0.001" min="0" step="0.0001"></label>

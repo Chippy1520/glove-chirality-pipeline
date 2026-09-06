@@ -57,7 +57,12 @@ def train(
     selection_metric: str = "macro_recall",
     augmentation: str = "standard",
     tensorboard_logdir: str = "",
+    head_only_epochs: int = 0,
+    backbone_learning_rate: float | None = None,
 ) -> list[str]:
+    from glove_chirality.fine_tuning import fine_tuning_config
+
+    fine_tuning_config(epochs, learning_rate, head_only_epochs, backbone_learning_rate)
     _required(manifest=manifest, output=output)
     command = _base() + [
         "train", "--manifest", manifest, "--output", output,
@@ -73,6 +78,10 @@ def train(
     ]
     if tensorboard_logdir.strip():
         command.extend(["--tensorboard-logdir", tensorboard_logdir])
+    if head_only_epochs:
+        command.extend(["--head-only-epochs", str(head_only_epochs)])
+    if backbone_learning_rate is not None:
+        command.extend(["--backbone-learning-rate", str(backbone_learning_rate)])
     if amp:
         command.append("--amp")
     return command

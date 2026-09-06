@@ -103,10 +103,15 @@ def build_parser():
         choices=CLASSIFIER_CHOICES,
         default="tiny_cnn",
     )
-    train.add_argument("--epochs", type=int, default=10)
+    train.add_argument("--epochs", type=int, default=10, help="Total epochs across both stages")
+    train.add_argument("--head-only-epochs", type=int, default=0,
+                       help="Initial frozen-backbone epochs; 0 disables warm-up; must be < epochs")
+    train.add_argument("--backbone-learning-rate", type=float, default=None,
+                       help="Positive LR below head LR; staged default: learning-rate / 10")
     train.add_argument("--batch-size", type=int, default=32)
     train.add_argument("--image-size", type=int, default=224)
-    train.add_argument("--learning-rate", type=float, default=1e-3)
+    train.add_argument("--learning-rate", type=float, default=1e-3,
+                       help="Head LR when staged; otherwise LR for the whole model")
     train.add_argument("--validation-fraction", type=float, default=0.2)
     train.add_argument("--seed", type=int, default=42)
     train.add_argument("--device", default="auto", help="auto, cpu, cuda, or cuda:N")
@@ -290,6 +295,8 @@ def main(argv=None):
             batch_size=args.batch_size,
             image_size=args.image_size,
             learning_rate=args.learning_rate,
+            head_only_epochs=args.head_only_epochs,
+            backbone_learning_rate=args.backbone_learning_rate,
             validation_fraction=args.validation_fraction,
             seed=args.seed,
             device_name=args.device,

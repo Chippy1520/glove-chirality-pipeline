@@ -13,8 +13,11 @@ All classifier backbones consume the same accepted passage crops and ImageNet-no
 | `swin_t` | Torchvision | Hierarchical transformer comparator |
 | `convnextv2_pico` | timm `convnextv2_pico.fcmae_ft_in1k` | Primary compact modern-CNN candidate |
 | `dinov3_convnext_tiny` | timm `convnext_tiny.dinov3_lvd1689m` | Self-supervised representation candidate |
+| `dinov3_vit_small` | timm `vit_small_patch16_dinov3.lvd1689m` | Small self-supervised vision transformer candidate |
 
 The checkpoint stores both the public model name and its implementation library/identifier. Inference reconstructs the architecture with `pretrained=False`, then loads the local checkpoint state dict; it does not download upstream weights.
+
+`dinov3_vit_small` is the ordinary ViT-S/16 variant, not Small Plus or the separate QKV-bias variant. Its exact pretrained identifier was verified in the installed timm 1.0.29 registry. Select it with `--model dinov3_vit_small` or the Model selector in either UI; existing model names, defaults, and checkpoint layouts remain unchanged. It uses the same two-class head and shared RGB/ImageNet normalization as other adapters. CPU reconstruction and forward passes at 224 and 256 pixels are tested without downloading weights; use image sizes divisible by its 16-pixel patch size. The upstream metadata recommends 256 pixels and bicubic interpolation, but GRIP deliberately retains its shared preprocessing for comparable experiments. Pretrained initialization may require Hugging Face access and acceptance of upstream weight terms; random-initialized tests do not validate pretrained accuracy.
 
 ## Recommended experiment
 
@@ -81,10 +84,37 @@ The GUI **Compare** tab and `compare-models` CLI collect normal training summari
 Repository code is MIT licensed, but pretrained weights have separate terms:
 
 - The timm metadata for `convnextv2_pico.fcmae_ft_in1k` identifies the pretrained weights as **CC BY-NC 4.0**.
-- `convnext_tiny.dinov3_lvd1689m` uses Meta's **DINOv3 License**.
+- `convnext_tiny.dinov3_lvd1689m` and `vit_small_patch16_dinov3.lvd1689m` use Meta's **DINOv3 License** (see the [ViT-S model card](https://huggingface.co/timm/vit_small_patch16_dinov3.lvd1689m)).
 - Torchvision models use the terms attached to their respective pretrained weight datasets/releases.
 
 Review the selected pretrained-weight license before commercial or industrial deployment. This project does not redistribute upstream pretrained weights or trained production checkpoints.
+
+## Opt-in staged fine-tuning
+
+The standard `train` command supports `--head-only-epochs N` and optional
+`--backbone-learning-rate LR`. `--epochs` includes both stages, and N must be
+nonnegative and strictly less than the total. The existing `--learning-rate` is
+the head LR. After N epochs the backbone is unfrozen at the explicit lower LR
+(default: head LR / 10). With N=0 and no backbone LR, the original full-model,
+single-LR AdamW behavior is unchanged. An explicit backbone LR with N=0 enables
+differential LRs immediately. Nonfinite, nonpositive or non-lower backbone LRs
+are rejected before dataset/model loading.
+
+Head discovery is architecture-aware: TinyCNN's final linear layer, ResNet's `fc`,
+MobileNet's complete `classifier`, torchvision ViT's `heads`, Swin's `head`, and
+timm's `get_classifier()` (ConvNeXt `head.fc`; DINOv3 ViT `head`). Other parameters,
+including timm backbone normalization layers, remain frozen during warm-up.
+The backbone stays in eval mode then, so its BatchNorm buffers, dropout and
+stochastic depth do not change training behavior. Only the head is in train mode.
+Unfreezing adds a nonoverlapping backbone optimizer group without replacing the
+head or discarding its AdamW moments. All modules return to training mode.
+
+Checkpoints store `fine_tuning`, `epoch`, `stage`, `head_learning_rate` and
+`backbone_learning_rate`. The metrics sidecar includes the same config, `best_epoch`
+and per-epoch `history`; TensorBoard exposes `run/config`, `training/stage` and
+`training/*_learning_rate`. Effective backbone LR is logged as zero while frozen.
+The selected checkpoint may still be a warm-up epoch: selection is global, not
+reset at unfreezing. No resume protocol or separate explicit-split script is changed.
 
 ## Practical interpretation
 

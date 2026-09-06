@@ -82,10 +82,16 @@ def build_web_command(action: str, payload: dict[str, Any]) -> tuple[str, list[s
             manifest=_text(payload, "manifest"),
             output=_text(payload, "output"),
             model=_text(payload, "model", "resnet18"),
-            epochs=_integer(payload, "epochs", 20),
+            epochs=int(str(payload.get("epochs", 20))),
             batch_size=_integer(payload, "batch_size", 32),
             image_size=_integer(payload, "image_size", 224),
             learning_rate=_number(payload, "learning_rate", 0.001),
+            head_only_epochs=int(str(payload.get("head_only_epochs", 0))),
+            backbone_learning_rate=(
+                _number(payload, "backbone_learning_rate", 0.0001)
+                if payload.get("backbone_learning_rate") is not None
+                and _text(payload, "backbone_learning_rate") else None
+            ),
             validation_fraction=_number(payload, "validation_fraction", 0.2),
             seed=_integer(payload, "seed", 42),
             device=_text(payload, "device", "auto"),

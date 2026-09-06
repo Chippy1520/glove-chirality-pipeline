@@ -12,6 +12,7 @@ from glove_chirality.dataset import (
     grouped_split,
     read_manifest,
 )
+from glove_chirality.fine_tuning import FineTuning, fine_tuning_config
 from glove_chirality.models import build_model, model_backend
 
 LOSS_CHOICES = ("cross_entropy", "weighted_cross_entropy", "recall_hybrid")
@@ -127,7 +128,12 @@ def train_classifier(
     selection_metric: str = "macro_recall",
     augmentation: str = "standard",
     tensorboard_logdir: str | Path | None = None,
+    head_only_epochs: int = 0,
+    backbone_learning_rate: float | None = None,
 ) -> dict[str, object]:
+    tuning_config = fine_tuning_config(
+        epochs, learning_rate, head_only_epochs, backbone_learning_rate
+    )
     try:
         import torch
         from torch.utils.data import DataLoader
@@ -164,7 +170,8 @@ def train_classifier(
         ManifestDataset(validation_rows, image_size, False), **loader_options
     )
     model = build_model(model_name, len(CLASSES), pretrained=True).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    tuning = FineTuning(model, model_name, tuning_config)
+    optimizer = tuning.optimizer
     counts = Counter(row["label"] for row in train_rows)
     class_weights = torch.tensor(
         [len(train_rows) / (len(CLASSES) * counts[label]) for label in CLASSES],
@@ -186,6 +193,8 @@ def train_classifier(
     best_score = -1.0
     best_tiebreak = -1.0
     best_metrics: dict[str, object] = {}
+    best_epoch = None
+    history = []
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     writer = None
@@ -204,13 +213,14 @@ def train_classifier(
                     "loss": loss_name,
                     "selection_metric": selection_metric,
                     "image_size": image_size,
+                    "fine_tuning": tuning_config,
                 },
                 indent=2,
             ),
         )
 
     for epoch in range(epochs):
-        model.train()
+        epoch_state = tuning.begin_epoch(epoch)
         epoch_loss = 0.0
         batch_count = 0
         for images, targets in train_loader:
@@ -235,7 +245,11 @@ def train_classifier(
                 predictions_all.extend(predictions.tolist())
                 targets_all.extend(targets.tolist())
         metrics = classification_metrics(targets_all, predictions_all, len(CLASSES))
+        history.append({**epoch_state, "validation": metrics})
         if writer is not None:
+            writer.add_text("training/stage", epoch_state["stage"], epoch + 1)
+            for key in ("head_learning_rate", "backbone_learning_rate"):
+                writer.add_scalar(f"training/{key}", epoch_state[key], epoch + 1)
             writer.add_scalar("loss/train", epoch_loss / max(batch_count, 1), epoch + 1)
             writer.add_scalar("validation/accuracy", metrics["accuracy"], epoch + 1)
             writer.add_scalar("validation/macro_recall", metrics["macro_recall"], epoch + 1)
@@ -248,6 +262,9 @@ def train_classifier(
                 )
         print(
             f"epoch={epoch + 1}/{epochs} "
+            f"stage={epoch_state['stage']} "
+            f"head_lr={epoch_state['head_learning_rate']:g} "
+            f"backbone_lr={epoch_state['backbone_learning_rate']:g} "
             f"val_accuracy={metrics['accuracy']:.4f} "
             f"val_macro_recall={metrics['macro_recall']:.4f} "
             f"val_recall_right={metrics['recall_per_class'][CLASSES.index('right')]:.4f} "
@@ -257,9 +274,12 @@ def train_classifier(
         tiebreak = float(metrics["macro_f1"])
         if score > best_score or (score == best_score and tiebreak > best_tiebreak):
             best_score, best_tiebreak, best_metrics = score, tiebreak, metrics
+            best_epoch = dict(epoch_state)
             torch.save(
                 {
                     "state_dict": model.state_dict(),
+                    "fine_tuning": tuning_config,
+                    **epoch_state,
                     "model_name": model_name,
                     "model_backend": model_backend(model_name),
                     "classes": CLASSES,
@@ -299,6 +319,9 @@ def train_classifier(
         "train_samples": len(train_rows),
         "validation_samples": len(validation_rows),
         "best_validation": best_metrics,
+        "fine_tuning": tuning_config,
+        "best_epoch": best_epoch,
+        "history": history,
     }
     output.with_suffix(output.suffix + ".metrics.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"

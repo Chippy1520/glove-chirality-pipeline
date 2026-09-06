@@ -103,6 +103,16 @@ This uses each selected mask-derived bbox as a variable-width/height source crop
 
 Choose the manifest, checkpoint path, model, epochs, batch/image size, learning rate, grouped validation fraction, seed, device, AMP, and DataLoader workers. The Layer-2 controls also expose:
 
+- **Total epochs (both stages)** plus **Head-only epochs** (default 0/off, strictly
+  less than total) in both browser and Tk forms. Warm-up freezes the backbone in
+  eval mode and trains the classification head only; the remaining epochs unfreeze it.
+- **Backbone LR** (optional, blank means head LR / 10 when staged). This must be
+  finite, positive and lower than the existing learning rate, which is the head LR.
+  Blank plus zero head-only epochs preserves full-model single-LR training. An
+  explicit backbone LR with zero warm-up enables differential LRs immediately.
+  Stage/LRs/config appear in metrics JSON, checkpoints and TensorBoard. Best-model
+  selection spans both stages, including warm-up.
+
 - `cross_entropy`, `weighted_cross_entropy`, or experimental `recall_hybrid` loss;
 - the recall target (`right` for the current safety objective);
 - recall-penalty weight; and

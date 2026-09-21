@@ -165,24 +165,74 @@ def _crop_bounds(
     )
 
 
-def _letterbox(image: np.ndarray, size: int) -> np.ndarray:
-    """Resize without aspect distortion and center on a fixed square canvas."""
+def _letterbox(
+    image: np.ndarray,
+    size: int,
+    fill_value: int = 114,
+) -> np.ndarray:
+    """Resize without aspect distortion and center on a fixed neutral canvas."""
     height, width = image.shape[:2]
+
     if height == 0 or width == 0:
         return image
-    scale = min(size / width, size / height)
-    resized_width = max(1, round(width * scale))
-    resized_height = max(1, round(height * scale))
-    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-    resized = cv2.resize(image, (resized_width, resized_height), interpolation=interpolation)
-    fill = np.median(image.reshape(-1, image.shape[2]), axis=0).astype(image.dtype)
-    canvas = np.empty((size, size, image.shape[2]), dtype=image.dtype)
-    canvas[:] = fill
-    x1 = (size - resized_width) // 2
-    y1 = (size - resized_height) // 2
-    canvas[y1:y1 + resized_height, x1:x1 + resized_width] = resized
-    return canvas
 
+    scale = min(
+        size / width,
+        size / height,
+    )
+
+    resized_width = max(
+        1,
+        round(width * scale),
+    )
+
+    resized_height = max(
+        1,
+        round(height * scale),
+    )
+
+    interpolation = (
+        cv2.INTER_AREA
+        if scale < 1
+        else cv2.INTER_LINEAR
+    )
+
+    resized = cv2.resize(
+        image,
+        (
+            resized_width,
+            resized_height,
+        ),
+        interpolation=interpolation,
+    )
+
+    # Constant neutral gray padding.
+    # This prevents recording-day / illumination colour from leaking
+    # into Layer-2 through dynamically generated border colours.
+    canvas = np.full(
+        (
+            size,
+            size,
+            image.shape[2],
+        ),
+        fill_value,
+        dtype=image.dtype,
+    )
+
+    x1 = (
+        size - resized_width
+    ) // 2
+
+    y1 = (
+        size - resized_height
+    ) // 2
+
+    canvas[
+        y1:y1 + resized_height,
+        x1:x1 + resized_width,
+    ] = resized
+
+    return canvas
 
 def create_event_crop(
     frame: np.ndarray,
@@ -206,7 +256,11 @@ def create_event_crop(
             background = crop[outside]
             source = background if background.size else crop.reshape(-1, crop.shape[2])
             crop[outside] = np.median(source, axis=0).astype(crop.dtype)
-    return _letterbox(crop, event.output_size)
+    return _letterbox(
+        crop,
+        event.output_size,
+        event.letterbox_fill,
+    )
 
 
 def _canonical_detection_key(detection: Detection) -> tuple[float, ...]:

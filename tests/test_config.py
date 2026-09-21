@@ -14,6 +14,7 @@ def test_default_config_loads():
     assert config.detector.adaptive_background is True
     assert config.event.reject_multiple_detections is True
     assert config.event.output_size == 256
+    assert config.event.letterbox_fill == 114
     assert config.event.crop_mode == "bbox"
     assert config.event.timing_mode == "frames"
     assert config.event.make_square is True
@@ -99,8 +100,27 @@ def test_config_yaml_round_trip(tmp_path):
     config.detector.roi = (0.1, 0.2, 0.8, 0.9)
     config.detector.color_distance_threshold = 31.5
     config.event.crop_padding = 0.2
+    config.event.letterbox_fill = 77
     path = config.to_yaml(tmp_path / "nested" / "gui.yaml")
     loaded = ExtractionConfig.from_yaml(path)
     assert loaded.detector.roi == (0.1, 0.2, 0.8, 0.9)
     assert loaded.detector.color_distance_threshold == 31.5
     assert loaded.event.crop_padding == 0.2
+    assert loaded.event.letterbox_fill == 77
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        -1,
+        256,
+        114.5,
+    ],
+)
+def test_letterbox_fill_must_be_valid_byte_integer(value):
+    with pytest.raises(
+        ValueError,
+        match="letterbox_fill",
+    ):
+        EventConfig(
+            letterbox_fill=value
+        )

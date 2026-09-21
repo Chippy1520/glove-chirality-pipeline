@@ -3,7 +3,7 @@ import pytest
 
 from glove_chirality.config import DetectorConfig, EventConfig, ExtractionConfig
 from glove_chirality.detection.base import inside_trigger
-from glove_chirality.events import PassageProcessor, create_event_crop
+from glove_chirality.events import PassageProcessor, _letterbox, create_event_crop
 from glove_chirality.types import Detection
 
 
@@ -62,7 +62,7 @@ def test_bbox_crop_mode_preserves_rectangular_background():
     assert np.all(crop[0, 0] == 10)
     assert np.all(crop[10, 10] == 200)
 
-def test_tight_bbox_crop_excludes_adjacent_glove_without_changing_output_contract():
+def test_tight_bbox_crop_excludes_adjacent_glove_and_uses_neutral_letterbox():
     frame = np.full((20, 30, 3), 10, dtype=np.uint8)
 
     # Selected glove.
@@ -90,11 +90,67 @@ def test_tight_bbox_crop_excludes_adjacent_glove_without_changing_output_contrac
 
     assert crop.shape == (20, 20, 3)
 
-    # Selected glove is preserved.
-    assert np.all(crop == 200)
+    # 10x5 crop becomes 20x10 and is centered vertically.
+    assert np.all(crop[:5] == 114)
+    assert np.all(crop[5:15] == 200)
+    assert np.all(crop[15:] == 114)
 
-    # Adjacent glove must not appear.
+    # Adjacent glove must never enter the crop.
     assert not np.any(crop == 100)
+
+def test_letterbox_centers_content_with_constant_fill():
+    image = np.full(
+        (2, 4, 3),
+        200,
+        dtype=np.uint8,
+    )
+
+    result = _letterbox(
+        image,
+        size=8,
+        fill_value=77,
+    )
+
+    assert result.shape == (8, 8, 3)
+
+    # 4x2 becomes 8x4, centered vertically.
+    assert np.all(result[:2] == 77)
+    assert np.all(result[2:6] == 200)
+    assert np.all(result[6:] == 77)
+
+
+def test_create_event_crop_respects_configured_letterbox_fill():
+    frame = np.full(
+        (20, 30, 3),
+        10,
+        dtype=np.uint8,
+    )
+
+    frame[5:10, 5:15] = 200
+
+    detection = _segmentation_detection(
+        5, 5, 15, 10
+    )
+
+    config = _config(
+        crop_padding=0.0,
+        make_square=False,
+        crop_mode="bbox",
+        output_size=20,
+        letterbox_fill=77,
+    )
+
+    crop = create_event_crop(
+        frame,
+        detection,
+        config,
+    )
+
+    assert crop.shape == (20, 20, 3)
+
+    assert np.all(crop[:5] == 77)
+    assert np.all(crop[5:15] == 200)
+    assert np.all(crop[15:] == 77)
 
 def test_masked_crop_suppresses_non_glove_pixels():
     config = _config(crop_padding=0.5, make_square=False, crop_mode="masked")

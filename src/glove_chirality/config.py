@@ -94,6 +94,7 @@ class EventConfig:
     crop_padding: float = 0.12
     make_square: bool = True
     output_size: int = 256
+    letterbox_fill: int = 114
     crop_mode: str = "bbox"
     save_masks: bool = False
     min_sharpness: float = 0.0
@@ -121,6 +122,8 @@ class EventConfig:
             raise ValueError("track distance and crop padding must be non-negative")
         if self.output_size <= 0:
             raise ValueError("output_size must be positive")
+        if not isinstance(self.letterbox_fill, int) or not 0 <= self.letterbox_fill <= 255:
+            raise ValueError("letterbox_fill must be an integer in [0, 255]")
         if self.crop_mode not in {"bbox", "masked", "masked_fill"}:
             raise ValueError("crop_mode must be bbox, masked, or masked_fill")
         if self.timing_mode not in {"frames", "time"}:

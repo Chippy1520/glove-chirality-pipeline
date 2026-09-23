@@ -12,6 +12,18 @@ from glove_chirality.types import Detection
 
 
 @dataclass
+class _GloveTrack:
+    track_id: int
+    detection: Detection
+    center: tuple[float, float, float]
+    first_seen_s: float
+    seen: int = 1
+    missing: int = 0
+    missing_since_s: float | None = None
+    emitted: bool = False
+
+
+@dataclass
 class _Candidate:
     frame: np.ndarray
     detection: Detection
@@ -292,7 +304,7 @@ def _candidate_key(candidate: _Candidate) -> tuple[float, ...]:
 
 
 class PassageProcessor:
-    """Shared detector, gate, tracker, best-frame selector, and crop path."""
+    """Shared detector, per-glove tracker, crossing crop, and canonical crop path."""
 
     def __init__(
         self,
@@ -325,6 +337,9 @@ class PassageProcessor:
         self._trigger_crossing_position_norm: tuple[float, float] | None = None
         self._frame_width = 0
         self._frame_height = 0
+        self._tracks: list[_GloveTrack] = []
+        self._next_track_id = 1
+        self._recent_emits: list[tuple[float, float, float]] = []
 
     def _event_id(self) -> str:
         self.sequence += 1
@@ -515,6 +530,179 @@ class PassageProcessor:
         distance = np.hypot(chosen.center[0] - last.center[0], chosen.center[1] - last.center[1])
         return chosen if distance <= maximum else None
 
+    def _track_gate(self, detection: Detection, width: int, height: int) -> float:
+        del detection
+        diagonal = max(1.0, float(np.hypot(width, height)))
+        return float(self.config.event.max_track_distance_ratio * diagonal)
+
+    def _match_instances(
+        self,
+        detections: list[Detection],
+        width: int,
+        height: int,
+    ) -> dict[int, int]:
+        diagonal = max(1.0, float(np.hypot(width, height)))
+        pairs: list[tuple[float, float, int, int]] = []
+        for track_index, track in enumerate(self._tracks):
+            gate = self._track_gate(track.detection, width, height)
+            for detection_index, detection in enumerate(detections):
+                distance = float(np.hypot(
+                    detection.center[0] - track.center[0],
+                    detection.center[1] - track.center[1],
+                ))
+                if distance > gate:
+                    continue
+                cost = distance / diagonal + self.config.event.association_iou_weight * (
+                    1.0 - _box_iou(track.detection, detection)
+                )
+                pairs.append((cost, distance, track_index, detection_index))
+        pairs.sort()
+        used_tracks: set[int] = set()
+        used_detections: set[int] = set()
+        matches: dict[int, int] = {}
+        for cost, _distance, track_index, detection_index in pairs:
+            del cost
+            if track_index in used_tracks or detection_index in used_detections:
+                continue
+            used_tracks.add(track_index)
+            used_detections.add(detection_index)
+            matches[track_index] = detection_index
+        return matches
+
+    def _overlapping(self, detections: list[Detection]) -> set[int]:
+        if not self.config.event.reject_multiple_detections:
+            return set()
+        blocked: set[int] = set()
+        for index, first in enumerate(detections):
+            for other in range(index + 1, len(detections)):
+                if _box_iou(first, detections[other]) >= 0.45:
+                    blocked.add(index)
+                    blocked.add(other)
+        return blocked
+
+    def _recently_emitted(self, detection: Detection, timestamp_s: float, width: int, height: int) -> bool:
+        cutoff = timestamp_s - self.config.event.cooldown_seconds
+        self._recent_emits = [item for item in self._recent_emits if item[2] >= cutoff]
+        gate = self._track_gate(detection, width, height)
+        return any(
+            float(np.hypot(detection.center[0] - x, detection.center[1] - y)) <= gate
+            for x, y, _seen in self._recent_emits
+        )
+
+    def _emit_crossing(
+        self,
+        track: _GloveTrack,
+        frame: np.ndarray,
+        detection: Detection,
+        frame_index: int,
+        timestamp_s: float,
+        width: int,
+        height: int,
+    ) -> PassageOutcome | None:
+        if track.emitted or width <= 0 or height <= 0:
+            return None
+        axis, line = trigger_line_position(self.config, width, height)
+        increasing = _direction_increasing(self.config.event.belt_direction)
+        prev_x, prev_y, prev_t = track.center
+        current_x, current_y = detection.center
+        if axis == "y":
+            alpha = directional_crossing_alpha(prev_y, float(current_y), line, increasing)
+            cross_x = prev_x + (alpha or 0.0) * (float(current_x) - prev_x)
+            cross_y = line
+        else:
+            alpha = directional_crossing_alpha(prev_x, float(current_x), line, increasing)
+            cross_x = line
+            cross_y = prev_y + (alpha or 0.0) * (float(current_y) - prev_y)
+        if alpha is None:
+            return None
+        track.emitted = True
+        self._recent_emits.append((float(current_x), float(current_y), timestamp_s))
+        return PassageOutcome(
+            self._event_id(),
+            self.source_video,
+            self.label,
+            "accepted",
+            "",
+            frame_index,
+            timestamp_s,
+            1,
+            detection,
+            0.0,
+            create_event_crop(frame, detection, self.config),
+            None,
+            track.first_seen_s,
+            prev_t + alpha * (timestamp_s - prev_t),
+            (float(cross_x), float(cross_y)),
+            (float(cross_x) / width, float(cross_y) / height),
+            (float(current_x), float(current_y)),
+            (float(current_x) / width, float(current_y) / height),
+        )
+
+    def _process_instances(
+        self,
+        frame: np.ndarray,
+        detections: list[Detection],
+        frame_index: int,
+        timestamp_s: float,
+        width: int,
+        height: int,
+    ) -> list[PassageOutcome]:
+        eligible = [
+            detection
+            for detection in detections
+            if inside_trigger(detection, self.config.detector, width, height)
+        ]
+        blocked = self._overlapping(eligible)
+        outcomes: list[PassageOutcome] = []
+        if blocked and not self.ambiguity_latched:
+            outcomes.append(self._record(
+                "multiple_candidates", frame_index, timestamp_s, len(blocked), None
+            ))
+        self.ambiguity_latched = bool(blocked)
+        usable = [detection for index, detection in enumerate(eligible) if index not in blocked]
+        matches = self._match_instances(usable, width, height)
+        for track_index, detection_index in matches.items():
+            track = self._tracks[track_index]
+            detection = usable[detection_index]
+            outcome = self._emit_crossing(
+                track, frame, detection, frame_index, timestamp_s, width, height
+            )
+            if outcome is not None:
+                outcomes.append(outcome)
+            track.detection = detection
+            track.center = (float(detection.center[0]), float(detection.center[1]), timestamp_s)
+            track.seen += 1
+            track.missing = 0
+            track.missing_since_s = None
+        matched = set(matches.values())
+        born: list[_GloveTrack] = []
+        for index, detection in enumerate(usable):
+            if index in matched or self._recently_emitted(detection, timestamp_s, width, height):
+                continue
+            born.append(_GloveTrack(
+                self._next_track_id,
+                detection,
+                (float(detection.center[0]), float(detection.center[1]), timestamp_s),
+                timestamp_s,
+            ))
+            self._next_track_id += 1
+        survivors: list[_GloveTrack] = []
+        for track_index, track in enumerate(self._tracks):
+            if track_index in matches:
+                survivors.append(track)
+                continue
+            track.missing += 1
+            if track.missing_since_s is None:
+                track.missing_since_s = timestamp_s
+            if self.config.event.timing_mode == "time":
+                lost = timestamp_s - track.missing_since_s >= self.config.event.exit_missing_seconds
+            else:
+                lost = track.missing >= self.config.event.exit_missing_frames
+            if not lost:
+                survivors.append(track)
+        self._tracks = survivors + born
+        return outcomes
+
     def _handle_missing(self, frame_index: int, timestamp_s: float) -> list[PassageOutcome]:
         outcomes: list[PassageOutcome] = []
         if self.active or self.seen:
@@ -550,6 +738,12 @@ class PassageProcessor:
         height, width = frame.shape[:2]
         self._frame_width = int(width)
         self._frame_height = int(height)
+        if self.config.event.trigger_line_enabled:
+            outcomes = self._process_instances(
+                frame, detections, frame_index, timestamp_s, width, height
+            )
+            event_latency = (time.perf_counter() - event_start) * 1000.0
+            return FrameResult(tuple(outcomes), tuple(detections), detector_latency, event_latency)
         outcomes: list[PassageOutcome] = []
 
         eligible = [
@@ -667,6 +861,9 @@ class PassageProcessor:
         if self.last_timestamp_s is not None and timestamp_s < self.last_timestamp_s:
             raise ValueError("passage timestamps must be nondecreasing")
         self.last_timestamp_s = timestamp_s
+        if self.config.event.trigger_line_enabled:
+            self._tracks.clear()
+            return ()
         outcomes: list[PassageOutcome] = []
         if self.active:
             outcome = self._finalize("end_of_stream", timestamp_s)

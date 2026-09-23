@@ -294,6 +294,8 @@ def run_live_inference(
     processor = PassageProcessor(detector, config, source_name, "live")
     metrics = LiveMetrics()
     rolling = _RollingMetrics()
+    metrics_lock = threading.Lock()
+    classify_queue: queue.Queue = queue.Queue()
     started = time.monotonic()
     wall_start = datetime.now().astimezone()
     session_id = session_id or wall_start.strftime("live_%Y%m%d_%H%M%S")
@@ -308,26 +310,18 @@ def run_live_inference(
     def classify_now() -> bool:
         return True if should_classify is None else bool(should_classify())
 
-    def handle(outcome: PassageOutcome, now_relative: float) -> None:
-        prediction = None
-        confidence = None
-        classifier_ms = None
-        if outcome.accepted and classify_now():
-            if before_classify is not None:
-                before_classify()
-            classifier_start = time.perf_counter()
-            prediction, confidence = classifier.predict_array(outcome.crop)
-            classifier_ms = (time.perf_counter() - classifier_start) * 1000.0
-            rolling.classifier_ms.append(classifier_ms)
-            metrics.accepted_passages += 1
-            if outcome.passage_started_s is not None:
-                rolling.accepted_latency_ms.append(
-                    max(0.0, now_relative - outcome.passage_started_s) * 1000.0
-                )
-        elif outcome.accepted:
-            metrics.accepted_passages += 1
-        else:
-            metrics.rejected_passages += 1
+    def emit_outcome(outcome: PassageOutcome, now_relative: float, prediction, confidence, classifier_ms) -> None:
+        with metrics_lock:
+            if outcome.accepted:
+                metrics.accepted_passages += 1
+                if classifier_ms is not None:
+                    rolling.classifier_ms.append(classifier_ms)
+                if outcome.passage_started_s is not None and classifier_ms is not None:
+                    rolling.accepted_latency_ms.append(
+                        max(0.0, now_relative - outcome.passage_started_s) * 1000.0
+                    )
+            else:
+                metrics.rejected_passages += 1
         payload = _event_payload(
             outcome,
             prediction,
@@ -343,8 +337,43 @@ def run_live_inference(
             payload["crop"] = outcome.crop
         emit(payload)
 
+    def classify_outcome(outcome: PassageOutcome, now_relative: float) -> None:
+        if before_classify is not None:
+            before_classify()
+        classifier_start = time.perf_counter()
+        prediction, confidence = classifier.predict_array(outcome.crop)
+        classifier_ms = (time.perf_counter() - classifier_start) * 1000.0
+        emit_outcome(outcome, now_relative, prediction, confidence, classifier_ms)
+
+    classify_error: list[BaseException] = []
+
+    def classify_worker() -> None:
+        while True:
+            item = classify_queue.get()
+            try:
+                if item is None:
+                    return
+                outcome, now_relative = item
+                classify_outcome(outcome, now_relative)
+            except Exception as exc:  # noqa: BLE001 - surfaced after the detector loop joins
+                classify_error.append(exc)
+                return
+            finally:
+                classify_queue.task_done()
+
+    classify_thread = threading.Thread(target=classify_worker, name="layer2-classifier", daemon=True)
+    classify_thread.start()
+
+    def handle(outcome: PassageOutcome, now_relative: float) -> None:
+        if outcome.accepted and classify_now() and outcome.crop is not None:
+            classify_queue.put((outcome, now_relative))
+            return
+        emit_outcome(outcome, now_relative, None, None, None)
+
     def publish_metrics() -> None:
-        if metrics_callback is not None:
+        if metrics_callback is None:
+            return
+        with metrics_lock:
             metrics_callback(_metrics_snapshot(metrics, rolling, started, capture))
 
     try:
@@ -413,6 +442,10 @@ def run_live_inference(
         for outcome in processor.close(last_timestamp):
             handle(outcome, now_relative)
     finally:
+        classify_queue.put(None)
+        classify_thread.join(timeout=30)
+        if classify_error:
+            raise classify_error[0]
         capture.stop()
         if sink is not None:
             sink.close()

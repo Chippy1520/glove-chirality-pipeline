@@ -240,7 +240,7 @@ def test_reset_clears_crossing_so_the_next_passage_interpolates_again():
     assert processor._trigger_crossing_s is None
 
 
-def test_rejected_passage_keeps_observed_crossing_and_selected_center():
+def test_crossing_accepts_without_waiting_for_the_old_frame_count():
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
     processor = PassageProcessor(
         _SequenceDetector([[_box(30, 20)], [_box(70, 40)], []]),
@@ -250,7 +250,7 @@ def test_rejected_passage_keeps_observed_crossing_and_selected_center():
     outcomes = []
     for index, timestamp in enumerate((0.0, 2.0, 2.2)):
         outcomes.extend(processor.process(frame, index, timestamp).outcomes)
-    assert [outcome.status for outcome in outcomes] == ["insufficient_confirmation"]
+    assert [outcome.status for outcome in outcomes] == ["accepted"]
     outcome = outcomes[0]
     assert outcome.detection is not None
     assert outcome.trigger_crossing_s == pytest.approx(1.0)
@@ -259,10 +259,20 @@ def test_rejected_passage_keeps_observed_crossing_and_selected_center():
     assert outcome.center_px != pytest.approx((50.0, 30.0))
 
 
-def test_multiple_candidates_may_have_no_detection():
+def test_separated_gloves_are_not_an_immediate_multiple_reject():
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
     processor = PassageProcessor(
         _SequenceDetector([[_box(20, 50), _box(80, 50)]]),
+        _passage_config(),
+        "belt.avi",
+    )
+    assert processor.process(frame, 0, 0.0).outcomes == ()
+
+
+def test_overlapping_gloves_stay_ambiguous():
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    processor = PassageProcessor(
+        _SequenceDetector([[_box(50, 50, size=30), _box(55, 50, size=30)]]),
         _passage_config(),
         "belt.avi",
     )

@@ -9,7 +9,7 @@ detector:
   require_full_containment: true
   trigger_inner_margin_ratio: 0.0
   yolo_model: checkpoints/yolo11n-seg.pt
-  yolo_confidence: 0.25
+  yolo_confidence: 0.15
   yolo_class_id: 0
   yolo_device: auto
   yolo_half: false
@@ -36,6 +36,15 @@ event:
   trigger_line_enabled: true
   belt_direction: bottom_to_top
   trigger_line_fraction: 0.5
+  tracker_mode: passage_v2
+  crop_selector: best_frame
+  low_conf_recovery: true
+  track_low_conf: 0.15
+  track_high_conf: 0.35
+  new_track_conf: 0.45
+  reentry_time_s: 0.50
+  trigger_hysteresis_ratio: 0.02
+  max_track_distance_ratio: 0.12
 runtime:
   capture_queue_size: 2
   detect_every_n_frames: 1

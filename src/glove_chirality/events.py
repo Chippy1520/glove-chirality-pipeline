@@ -340,10 +340,23 @@ class PassageProcessor:
         self._tracks: list[_GloveTrack] = []
         self._next_track_id = 1
         self._recent_emits: list[tuple[float, float, float]] = []
+        self._passage_tracker = None
 
     def _event_id(self) -> str:
         self.sequence += 1
         return f"{self.label}__{self.source_video.rsplit('.', 1)[0]}__e{self.sequence:06d}"
+
+    def _passage_v2(self):
+        if self._passage_tracker is None:
+            from glove_chirality.tracking import PassageTracker
+
+            self._passage_tracker = PassageTracker(
+                self.config,
+                self.source_video,
+                self.label,
+                self._event_id,
+            )
+        return self._passage_tracker
 
     def _reset(self, timestamp_s: float, cooldown: bool = False) -> None:
         self.active = False
@@ -738,6 +751,13 @@ class PassageProcessor:
         height, width = frame.shape[:2]
         self._frame_width = int(width)
         self._frame_height = int(height)
+        if (
+            self.config.event.tracker_mode == "passage_v2"
+            and self.config.event.trigger_line_enabled
+        ):
+            outcomes = self._passage_v2().update(frame, detections, frame_index, timestamp_s)
+            event_latency = (time.perf_counter() - event_start) * 1000.0
+            return FrameResult(tuple(outcomes), tuple(detections), detector_latency, event_latency)
         if self.config.event.trigger_line_enabled:
             outcomes = self._process_instances(
                 frame, detections, frame_index, timestamp_s, width, height
@@ -862,6 +882,8 @@ class PassageProcessor:
             raise ValueError("passage timestamps must be nondecreasing")
         self.last_timestamp_s = timestamp_s
         if self.config.event.trigger_line_enabled:
+            if self._passage_tracker is not None:
+                self._passage_tracker.close()
             self._tracks.clear()
             return ()
         outcomes: list[PassageOutcome] = []

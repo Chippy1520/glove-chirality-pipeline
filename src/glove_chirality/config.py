@@ -112,6 +112,14 @@ class EventConfig:
     trigger_line_enabled: bool = False
     belt_direction: str = "left_to_right"
     trigger_line_fraction: float = 0.5
+    tracker_mode: str = "legacy"
+    crop_selector: str = "legacy"
+    low_conf_recovery: bool = False
+    track_low_conf: float = 0.15
+    track_high_conf: float = 0.35
+    new_track_conf: float = 0.45
+    reentry_time_s: float = 0.50
+    trigger_hysteresis_ratio: float = 0.0
 
     def __post_init__(self):
         self.validate()
@@ -158,6 +166,14 @@ class EventConfig:
             )
         if not 0.0 <= self.trigger_line_fraction <= 1.0:
             raise ValueError("trigger_line_fraction must be in [0.0, 1.0]")
+        if self.tracker_mode not in {"legacy", "passage_v2"}:
+            raise ValueError("tracker_mode must be legacy or passage_v2")
+        if self.crop_selector not in {"legacy", "best_frame"}:
+            raise ValueError("crop_selector must be legacy or best_frame")
+        if not 0.0 <= self.track_low_conf <= self.track_high_conf <= self.new_track_conf <= 1.0:
+            raise ValueError("track confidence thresholds must satisfy low <= high <= new <= 1")
+        if self.reentry_time_s < 0 or not 0.0 <= self.trigger_hysteresis_ratio <= 0.25:
+            raise ValueError("reentry time and trigger hysteresis are out of range")
 
 
 @dataclass

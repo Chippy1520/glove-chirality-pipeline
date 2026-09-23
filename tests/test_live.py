@@ -140,6 +140,15 @@ def test_live_classifier_runs_once_per_accepted_physical_event():
     assert emitted[0]["wall_time_iso"]
 
 
+def test_layer2_backlog_is_counted_and_does_not_drop():
+    from glove_chirality.live import LiveMetrics, note_classifier_backlog
+
+    metrics = LiveMetrics()
+    note_classifier_backlog(3, metrics)
+    note_classifier_backlog(4, metrics)
+    assert metrics.classifier_overload == 1
+
+
 def test_frame_callback_sees_existing_detections_without_extra_detect_calls():
     frame = np.full((24, 24, 3), 80, dtype=np.uint8)
     detector = _Detector([[]])

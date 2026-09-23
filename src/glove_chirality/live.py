@@ -148,6 +148,8 @@ class LiveMetrics:
     dropped_frames: int = 0
     accepted_passages: int = 0
     rejected_passages: int = 0
+    classifier_overload: int = 0
+    classifier_queue_depth: int = 0
 
 
 class _RollingMetrics:
@@ -156,10 +158,20 @@ class _RollingMetrics:
         self.event_ms: deque[float] = deque(maxlen=100)
         self.classifier_ms: deque[float] = deque(maxlen=100)
         self.accepted_latency_ms: deque[float] = deque(maxlen=100)
+        self.classifier_queue_wait_ms: deque[float] = deque(maxlen=100)
 
     @staticmethod
     def average(values: deque[float]) -> float:
         return sum(values) / len(values) if values else 0.0
+
+
+LAYER2_QUEUE_WARN = 4
+
+
+def note_classifier_backlog(waiting: int, metrics: LiveMetrics) -> None:
+    """Count a deep Layer 2 queue. Never drop the crop."""
+    if waiting >= LAYER2_QUEUE_WARN:
+        metrics.classifier_overload += 1
 
 
 def parse_capture_source(source: str | int) -> int | str:
@@ -228,6 +240,8 @@ def _event_payload(
         "checkpoint": checkpoint,
         "extraction_config": config_path,
         "classifier_ms": None if classifier_ms is None else round(float(classifier_ms), 3),
+        "classifier_queue_wait_ms": None,
+        "crossing_to_decision_ms": None,
     }
     return payload
 
@@ -243,6 +257,9 @@ def _metrics_snapshot(metrics: LiveMetrics, rolling: _RollingMetrics, started: f
         "event_ms": rolling.average(rolling.event_ms),
         "classifier_ms": rolling.average(rolling.classifier_ms),
         "accepted_latency_ms": rolling.average(rolling.accepted_latency_ms),
+        "classifier_queue_wait_ms": rolling.average(rolling.classifier_queue_wait_ms),
+        "classifier_queue_depth": metrics.classifier_queue_depth,
+        "classifier_overload": metrics.classifier_overload,
         "captured_frames": metrics.captured_frames,
         "processed_frames": metrics.processed_frames,
         "dropped_frames": metrics.dropped_frames,
@@ -310,16 +327,29 @@ def run_live_inference(
     def classify_now() -> bool:
         return True if should_classify is None else bool(should_classify())
 
-    def emit_outcome(outcome: PassageOutcome, now_relative: float, prediction, confidence, classifier_ms) -> None:
+    def emit_outcome(
+        outcome: PassageOutcome,
+        now_relative: float,
+        prediction,
+        confidence,
+        classifier_ms,
+        queue_wait_ms=None,
+    ) -> None:
+        anchor = outcome.trigger_crossing_s
+        if anchor is None:
+            anchor = outcome.passage_started_s
+        crossing_to_decision_ms = None
+        if outcome.accepted and classifier_ms is not None and anchor is not None:
+            crossing_to_decision_ms = max(0.0, now_relative - float(anchor)) * 1000.0
         with metrics_lock:
             if outcome.accepted:
                 metrics.accepted_passages += 1
                 if classifier_ms is not None:
                     rolling.classifier_ms.append(classifier_ms)
-                if outcome.passage_started_s is not None and classifier_ms is not None:
-                    rolling.accepted_latency_ms.append(
-                        max(0.0, now_relative - outcome.passage_started_s) * 1000.0
-                    )
+                if crossing_to_decision_ms is not None:
+                    rolling.accepted_latency_ms.append(crossing_to_decision_ms)
+                if queue_wait_ms is not None:
+                    rolling.classifier_queue_wait_ms.append(queue_wait_ms)
             else:
                 metrics.rejected_passages += 1
         payload = _event_payload(
@@ -333,17 +363,30 @@ def run_live_inference(
             config_path=config_path,
             classifier_ms=classifier_ms,
         )
+        if queue_wait_ms is not None:
+            payload["classifier_queue_wait_ms"] = round(float(queue_wait_ms), 3)
+        if crossing_to_decision_ms is not None:
+            payload["crossing_to_decision_ms"] = round(crossing_to_decision_ms, 3)
         if event_callback is not None and outcome.crop is not None:
             payload["crop"] = outcome.crop
         emit(payload)
 
-    def classify_outcome(outcome: PassageOutcome, now_relative: float) -> None:
+    def classify_outcome(outcome: PassageOutcome, queued_monotonic: float) -> None:
         if before_classify is not None:
             before_classify()
         classifier_start = time.perf_counter()
         prediction, confidence = classifier.predict_array(outcome.crop)
         classifier_ms = (time.perf_counter() - classifier_start) * 1000.0
-        emit_outcome(outcome, now_relative, prediction, confidence, classifier_ms)
+        completed = time.monotonic()
+        queue_wait_ms = max(0.0, (completed - queued_monotonic) * 1000.0 - classifier_ms)
+        emit_outcome(
+            outcome,
+            completed - started,
+            prediction,
+            confidence,
+            classifier_ms,
+            queue_wait_ms,
+        )
 
     classify_error: list[BaseException] = []
 
@@ -353,8 +396,8 @@ def run_live_inference(
             try:
                 if item is None:
                     return
-                outcome, now_relative = item
-                classify_outcome(outcome, now_relative)
+                outcome, queued_monotonic = item
+                classify_outcome(outcome, queued_monotonic)
             except Exception as exc:  # noqa: BLE001 - surfaced after the detector loop joins
                 classify_error.append(exc)
                 return
@@ -366,7 +409,10 @@ def run_live_inference(
 
     def handle(outcome: PassageOutcome, now_relative: float) -> None:
         if outcome.accepted and classify_now() and outcome.crop is not None:
-            classify_queue.put((outcome, now_relative))
+            with metrics_lock:
+                note_classifier_backlog(classify_queue.qsize(), metrics)
+                metrics.classifier_queue_depth = classify_queue.qsize()
+            classify_queue.put((outcome, time.monotonic()))
             return
         emit_outcome(outcome, now_relative, None, None, None)
 
@@ -374,6 +420,7 @@ def run_live_inference(
         if metrics_callback is None:
             return
         with metrics_lock:
+            metrics.classifier_queue_depth = classify_queue.qsize()
             metrics_callback(_metrics_snapshot(metrics, rolling, started, capture))
 
     try:

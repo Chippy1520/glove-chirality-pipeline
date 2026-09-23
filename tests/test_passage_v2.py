@@ -89,6 +89,34 @@ def test_line_jitter_does_not_emit_twice():
     assert len(accepted) == 1
 
 
+def test_reentry_gap_still_emits_one_crop():
+    accepted = _run([
+        [_box(100, 140, 0.8)],
+        [],
+        [],
+        [],
+        [_box(100, 120, 0.8)],
+        [_box(100, 70, 0.8)],
+    ])
+    assert len(accepted) == 1
+
+
+def test_fragmented_reentry_near_the_same_crossing_does_not_emit_again():
+    config = _config()
+    config.event.max_track_distance_ratio = 0.40
+    config.event.reentry_time_s = 0.05
+    config.event.validate()
+    accepted = _run([
+        [_box(100, 140, 0.8)],
+        [_box(100, 60, 0.8)],
+        [],
+        [],
+        [_box(100, 140, 0.8)],
+        [_box(100, 60, 0.8)],
+    ], config)
+    assert len(accepted) == 1
+
+
 def test_best_pre_cross_frame_is_selected():
     accepted = _run([
         [_box(100, 150, 0.50)],

@@ -89,3 +89,68 @@ def test_camera_failure_reports_open_and_first_read_failures():
 
     assert closed.released is True
     assert unreadable.released is True
+
+
+class _ModeCapture(_Capture):
+    def __init__(self, frame):
+        super().__init__(frame=frame, fps=30)
+        self.sets = []
+        self.sets_before_read = None
+
+    def set(self, prop, value):
+        self.sets.append((prop, value))
+        return True
+
+    def read(self):
+        self.sets_before_read = list(self.sets)
+        return super().read()
+
+    def get(self, property_id):
+        if property_id == cv2.CAP_PROP_FOURCC:
+            return float(cv2.VideoWriter_fourcc(*"MJPG"))
+        return super().get(property_id)
+
+
+def test_requested_mode_is_applied_before_first_read():
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    capture = _ModeCapture(frame)
+
+    opened = open_camera(
+        2,
+        backends=(CameraBackend("DirectShow", 700),),
+        capture_factory=lambda *_args: capture,
+        requested_width=1920,
+        requested_height=1080,
+        preferred_fourcc="MJPG",
+    )
+
+    props = [item[0] for item in capture.sets_before_read]
+    assert props.index(cv2.CAP_PROP_FOURCC) < props.index(cv2.CAP_PROP_FRAME_WIDTH)
+    assert props.index(cv2.CAP_PROP_FRAME_WIDTH) < props.index(cv2.CAP_PROP_FRAME_HEIGHT)
+    assert (opened.width, opened.height) == (1920, 1080)
+    assert opened.geometry_matches is True
+    assert opened.actual_fourcc == "MJPG"
+
+
+def test_negotiated_size_comes_from_frame_not_requested_size():
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    opened = open_camera(
+        2,
+        backends=(CameraBackend("DirectShow", 700),),
+        capture_factory=lambda *_args: _ModeCapture(frame),
+        requested_width=1920,
+        requested_height=1080,
+    )
+    assert (opened.width, opened.height) == (640, 480)
+    assert opened.geometry_matches is False
+
+
+def test_omitted_resolution_does_not_call_set():
+    capture = _ModeCapture(np.zeros((8, 8, 3), dtype=np.uint8))
+    opened = open_camera(
+        0,
+        backends=(CameraBackend("DirectShow", 1),),
+        capture_factory=lambda *_args: capture,
+    )
+    assert capture.sets == []
+    assert opened.geometry_matches is None

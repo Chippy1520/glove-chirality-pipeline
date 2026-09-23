@@ -92,6 +92,13 @@ def register_factory_routes(app, factory: FactoryLiveSession, host_only) -> None
     def factory_serial_disconnect():
         return jsonify(factory.disconnect_serial())
 
+    @app.post("/api/factory/display")
+    @host_only
+    def factory_display():
+        payload = _payload()
+        factory.set_display(show_size_rejected=_flag(payload.get("show_size_rejected")))
+        return jsonify(show_size_rejected=factory._show_rejected)
+
     @app.post("/api/factory/start")
     @host_only
     def factory_start():

@@ -116,6 +116,20 @@
     $("#factory-serial-status").textContent = serial.connected
       ? `Connected ${serial.port || ""} · last ${serial.last_command || "—"} · ACK ${serial.last_ack || "—"}`
       : `Disconnected${serial.fault ? ` · ${serial.fault}` : ""}`;
+    const camera = status.camera_actual || {};
+    const request = status.camera_request || {};
+    const requested = request.width && request.height ? `${request.width}x${request.height}` : "auto";
+    const actual = camera.width && camera.height ? `${camera.width}x${camera.height}` : "—";
+    $("#factory-capture-info").textContent = `Capture: ${actual} · Requested: ${requested} · Backend: ${camera.backend || "—"} · FourCC: ${camera.fourcc || request.fourcc || "auto"} · Browser display: full frame · Detector ROI inference: ON · YOLO imgsz: ${status.yolo_imgsz || 640}`;
+    const warning = $("#factory-geometry-warning");
+    if (status.geometry_warning) {
+      warning.hidden = false;
+      warning.textContent = status.geometry_warning;
+    } else {
+      warning.hidden = true;
+    }
+    const counts = status.yolo_counts || {};
+    $("#factory-yolo-counts").textContent = `YOLO raw: ${counts.raw ?? "—"} · size rejected: ${counts.size_rejected ?? "—"} · kept: ${counts.kept ?? "—"} · eligible: ${counts.eligible ?? "—"}`;
     const positions = status.positions || [];
     $("#factory-position").textContent = positions.length
       ? positions.map((item) => `${item.state} X=${Number(item.center_px[0]).toFixed(0)} px, Y=${Number(item.center_px[1]).toFixed(0)} px · ${Number(item.center_norm[0]).toFixed(3)}, ${Number(item.center_norm[1]).toFixed(3)}`).join(" | ")
@@ -227,6 +241,13 @@
     await api("/api/factory/start", {
       method: "POST",
       body: JSON.stringify({
+        camera_preset: $("#factory-camera-preset").value,
+        camera_backend: $("#factory-camera-backend").value,
+        camera_width: $("#factory-camera-width").value,
+        camera_height: $("#factory-camera-height").value,
+        camera_fps: $("#factory-camera-fps").value,
+        camera_fourcc: $("#factory-camera-fourcc").value,
+        geometry: window.factoryGeometry || "yaml",
         source: selectedValue($("#factory-camera"), $("#factory-custom-source")),
         checkpoint: selectedValue($("#factory-checkpoint"), $("#factory-custom-checkpoint")),
         config: selectedValue($("#factory-config"), $("#factory-custom-config")),
@@ -248,6 +269,27 @@
 
   function bind() {
     if (!$("#factory")) return;
+    $("#factory-camera-preset").addEventListener("change", () => {
+      $("#factory-camera-custom").hidden = $("#factory-camera-preset").value !== "custom";
+    });
+    $("#factory-grip-geometry").addEventListener("click", () => {
+      window.factoryGeometry = "grip";
+      $("#factory-belt-direction").value = "bottom_to_top";
+      $("#factory-trigger-enabled").checked = true;
+      $("#factory-trigger-fraction").value = "0.5";
+      $("#factory-geometry-note").textContent = "Runtime geometry override active";
+    });
+    $("#factory-reset-geometry").addEventListener("click", () => {
+      window.factoryGeometry = "yaml";
+      $("#factory-geometry-note").textContent = "Using the selected YAML geometry.";
+    });
+    $("#factory-show-rejected").addEventListener("change", async () => {
+      await api("/api/factory/display", { method: "POST", body: JSON.stringify({ show_size_rejected: $("#factory-show-rejected").checked }) });
+    });
+    $("#factory-expand").addEventListener("click", () => {
+      const panel = $("#factory-camera-panel");
+      if (panel.requestFullscreen) panel.requestFullscreen();
+    });
     $("#factory-scan").addEventListener("click", async () => {
       const payload = await api("/api/factory/cameras");
       fillSelect($("#factory-camera"), payload.cameras.map((item) => ({ value: String(item.index), label: item.label })), "Choose a camera", "Custom source...");

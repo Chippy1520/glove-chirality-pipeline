@@ -56,6 +56,8 @@ def draw_live_overlay(
     frame: np.ndarray,
     config: ExtractionConfig,
     detections: Sequence[Detection],
+    rejected: Sequence = (),
+    show_rejected: bool = False,
 ) -> np.ndarray:
     """Return an annotated copy. The input frame is not modified."""
     image = frame.copy()
@@ -69,6 +71,9 @@ def draw_live_overlay(
     _draw_trigger_line(image, config, width, height)
     for index, (detection, state) in enumerate(zip(items, states), start=1):
         _draw_detection(image, detection, state, index)
+    if show_rejected:
+        for item in rejected:
+            _draw_rejected(image, item.detection, item.box_area_ratio)
     _draw_banner(
         image,
         detection_count=len(items),
@@ -162,7 +167,9 @@ def _draw_detection(image, detection: Detection, state: str, index: int) -> None
     )
     center = (round(detection.center[0]), round(detection.center[1]))
     cv2.circle(image, center, 4, color, -1, cv2.LINE_8)
-    label = f"GLOVE {index} | {detection.confidence:.2f} | {state}"
+    height, width = image.shape[:2]
+    ratio = detection.area / max(1, width * height)
+    label = f"G{index} | conf {detection.confidence:.2f} | area {ratio * 100:.1f}% | {state}"
     text_y = detection.y1 - 8
     if text_y < 52:
         text_y = min(image.shape[0] - 6, detection.y2 + 16)
@@ -172,6 +179,21 @@ def _draw_detection(image, detection: Detection, state: str, index: int) -> None
         (detection.x1, text_y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
+        color,
+        1,
+        cv2.LINE_AA,
+    )
+
+
+def _draw_rejected(image, detection: Detection, ratio: float) -> None:
+    color = (160, 160, 160)
+    cv2.rectangle(image, (detection.x1, detection.y1), (detection.x2, detection.y2), color, 1)
+    cv2.putText(
+        image,
+        f"SIZE REJECTED | {ratio * 100:.1f}%",
+        (detection.x1, max(12, detection.y1 - 6)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.4,
         color,
         1,
         cv2.LINE_AA,

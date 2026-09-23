@@ -221,11 +221,11 @@ Optional serial support:
 python -m pip install -e ".[factory]"
 ```
 
-The page is normal document flow and scrolls on a laptop. Host controls stay loopback-only. A LAN viewer can see sanitized status only; it has no camera frames, serial, ARMED, start, stop, or config routes.
+The page is normal document flow and scrolls on a laptop. The live camera panel is full width, uses `object-fit: contain`, and does not crop the inference frame. Host controls stay loopback-only. A LAN viewer can see sanitized status only; it has no camera frames, serial, ARMED, start, stop, or config routes.
 
 ### What the operator selects
 
-- **Scan Cameras** uses the existing Windows backend fallback and releases each test capture immediately. A custom OpenCV source remains available for streams or files.
+- **Scan Cameras** uses the existing Windows backend fallback, reports the default mode, and probes whether 1920x1080 MJPG is available. It releases each test capture immediately. The GRIP 1080p preset requests DirectShow, MJPG, and 1920x1080 before the first frame. YOLO `imgsz` stays 640. If the camera negotiates a different size, Factory Live shows a geometry mismatch and does not upscale the frame.
 - Checkpoints are discovered under a remembered models root (`outputs/factory_settings.json`, gitignored) or `GRIP_DATA_ROOT/runs/layer2_classifier`. No machine-specific dataset path is committed.
 - Extraction YAML files under `configs/` are listed. `configs/factory.yaml` is a portable template: relative YOLO placeholder, required masks, letterbox fill 114, and the current GRIP ROI/trigger/timing values. Replace the YOLO checkpoint on the Layer 1 page before production use.
 - Device choices are `auto`, `cuda`, `cuda:0`, and `cpu`. The page reports whether CUDA is actually available and which device PyTorch selected. It does not claim CUDA is active if CPU was selected.

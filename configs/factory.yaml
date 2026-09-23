@@ -4,8 +4,8 @@
 # relative placeholder is not the checkpoint on this machine.
 detector:
   backend: yolo
-  roi: [0.15, 0.05, 0.90, 0.99]
-  trigger_zone: [0.18, 0.15, 0.90, 0.90]
+  roi: [0.12, 0.03, 0.98, 0.995]
+  trigger_zone: [0.15, 0.10, 0.97, 0.96]
   require_full_containment: true
   trigger_inner_margin_ratio: 0.0
   yolo_model: checkpoints/yolo11n-seg.pt
@@ -34,7 +34,7 @@ event:
   cooldown_seconds: 0.30
   association_iou_weight: 0.25
   trigger_line_enabled: true
-  belt_direction: left_to_right
+  belt_direction: bottom_to_top
   trigger_line_fraction: 0.5
 runtime:
   capture_queue_size: 2

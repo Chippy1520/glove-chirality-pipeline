@@ -32,16 +32,29 @@ class CapturedFrame:
 class LatestFrameCapture:
     """Background OpenCV capture that drops stale frames when its queue is full."""
 
-    def __init__(self, source: int | str, queue_size: int = 2):
+    def __init__(self, source: int | str, queue_size: int = 2, *, camera_mode: dict | None = None):
         self.source = source
+        self.camera_mode = dict(camera_mode or {})
+        self.opened = None
         self._first_frame: np.ndarray | None = None
         if isinstance(source, int):
-            opened = open_camera(source, capture_factory=cv2.VideoCapture)
+            opened = open_camera(
+                source,
+                capture_factory=cv2.VideoCapture,
+                preferred_backend=self.camera_mode.get("backend"),
+                requested_width=self.camera_mode.get("width"),
+                requested_height=self.camera_mode.get("height"),
+                requested_fps=self.camera_mode.get("fps"),
+                preferred_fourcc=self.camera_mode.get("fourcc"),
+            )
+            self.opened = opened
             self.capture = opened.capture
             self._first_frame = opened.first_frame
             print(
                 f"camera index={source} backend={opened.backend} "
-                f"resolution={opened.width}x{opened.height} fps={opened.fps:.2f}",
+                f"requested={opened.requested_width}x{opened.requested_height} "
+                f"actual={opened.width}x{opened.height} fps={opened.fps:.2f} "
+                f"fourcc={opened.actual_fourcc or opened.requested_fourcc or 'auto'}",
                 file=sys.stderr,
             )
         else:

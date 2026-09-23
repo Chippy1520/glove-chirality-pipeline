@@ -2,9 +2,21 @@
 .field-help.warn { color: var(--warning); }
 .factory-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
 .factory-controls .form-actions, .factory-controls .check-field { grid-column: 1 / -1; }
-.factory-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr); gap: 16px; margin: 16px 0; }
-.factory-preview, .factory-crop { width: 100%; height: auto; background: #101828; border-radius: 10px; }
-.factory-crop { width: 256px; max-width: 100%; background: #eceff3; }
+.factory-layout { display: block; margin: 16px 0; }
+.factory-preview {
+  display: block;
+  width: 100%;
+  max-width: 1920px;
+  height: auto;
+  max-height: 80vh;
+  object-fit: contain;
+  object-position: center;
+  margin: 12px auto;
+  background: #000;
+  border-radius: 10px;
+}
+.factory-crop { width: 256px; max-width: 100%; height: auto; background: #eceff3; }
+.notice.warn { background: #fff6e8; color: #a15c07; padding: 12px 14px; border-radius: 10px; white-space: pre-wrap; }
 .factory-stage { margin: 12px 0; font-weight: 700; }
 .status-pass { background: #e8f7f0; color: #087a55; }
 .status-reject { background: #fdecea; color: #b42318; }

@@ -7,6 +7,21 @@
 
   <article class="panel host-only">
     <div class="factory-controls">
+      <label class="field"><span>Camera preset</span>
+        <select id="factory-camera-preset">
+          <option value="auto">Auto</option>
+          <option value="grip_1080p" selected>GRIP 1080p</option>
+          <option value="custom">Custom</option>
+        </select>
+        <small class="field-help">GRIP 1080p requests DirectShow, MJPG, and 1920x1080 before the first frame. YOLO imgsz stays 640. Auto keeps the camera default.</small>
+      </label>
+      <div id="factory-camera-custom" hidden>
+        <label class="field"><span>Backend</span><input id="factory-camera-backend" value="DirectShow"></label>
+        <label class="field"><span>Requested width</span><input id="factory-camera-width" type="number" value="1920" min="1"></label>
+        <label class="field"><span>Requested height</span><input id="factory-camera-height" type="number" value="1080" min="1"></label>
+        <label class="field"><span>Requested FPS</span><input id="factory-camera-fps" type="number" min="0" step="1" placeholder="Auto"></label>
+        <label class="field"><span>FourCC</span><select id="factory-camera-fourcc"><option value="">Auto</option><option value="MJPG" selected>MJPG</option></select></label>
+      </div>
       <label class="field"><span>Camera</span>
         <select id="factory-camera"><option value="">Scan or choose a camera</option></select>
         <small class="field-help">Host camera used for live inspection. Scan detects available OpenCV camera indices and reports backend, resolution and FPS.</small>
@@ -60,10 +75,14 @@
         <input id="factory-decision-threshold" type="number" value="0.5" min="0" max="1" step="0.01">
         <small class="field-help">Only relevant when using a recall-priority class. Lowering the RIGHT threshold can reduce missed right gloves but increases false rejects.</small>
       </label>
-      <label class="field"><span>Belt direction</span>
-        <select id="factory-belt-direction"><option>left_to_right</option><option>right_to_left</option><option>top_to_bottom</option><option>bottom_to_top</option></select>
-        <small class="field-help">Direction the glove moves through the trigger zone. Used to determine trigger line crossing.</small>
-      </label>
+      <p class="field-help">GRIP production direction: Bottom → Top. The trigger line is horizontal.</p>
+      <details class="field">
+        <summary>Advanced belt direction</summary>
+        <label class="field"><span>Belt direction</span>
+          <select id="factory-belt-direction"><option>bottom_to_top</option><option>top_to_bottom</option><option>left_to_right</option><option>right_to_left</option></select>
+          <small class="field-help">Direction the glove moves through the trigger zone. Used to determine trigger line crossing. Production default is bottom to top.</small>
+        </label>
+      </details>
       <label class="check-field"><input id="factory-trigger-enabled" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>Trigger line</strong><small class="field-help">Virtual line used to timestamp when the glove passes a known conveyor position.</small></span></label>
       <label class="field"><span>Trigger line fraction</span><input id="factory-trigger-fraction" type="number" value="0.5" min="0" max="1" step="0.01"></label>
 
@@ -84,6 +103,12 @@
         <button id="factory-connect" class="button" type="button">Connect</button>
         <button id="factory-disconnect" class="button" type="button">Disconnect</button>
       </div>
+      <div class="form-actions">
+        <button id="factory-grip-geometry" class="button" type="button">Apply GRIP Current-Camera Geometry</button>
+        <button id="factory-reset-geometry" class="button" type="button">Reset to YAML</button>
+      </div>
+      <p id="factory-geometry-note" class="field-help">Using the selected YAML geometry until GRIP geometry is applied.</p>
+      <label class="check-field"><input id="factory-show-rejected" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>Show size-rejected YOLO boxes</strong><small class="field-help">Gray diagnostic boxes only. They never enter the passage processor.</small></span></label>
       <label class="check-field"><input id="factory-audio" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>Audio alert on reject</strong><small class="field-help">Plays one browser alert when a reject-class glove is accepted and classified.</small></span></label>
       <label class="check-field"><input id="factory-continue-counters" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>Continue counters</strong><small class="field-help">Leave session counters unchanged. Otherwise a new session starts from zero.</small></span></label>
       <div class="form-actions">
@@ -97,10 +122,15 @@
   </article>
 
   <p id="factory-stage" class="factory-stage">Idle</p>
+  <p id="factory-geometry-warning" class="notice warn" hidden></p>
   <div class="factory-layout">
-    <article class="panel">
-      <div class="panel-heading"><div><h2>Live camera</h2><p>Layer-1 boxes come from the same PassageProcessor frame. Layer 2 is not run per frame.</p></div></div>
+    <article id="factory-camera-panel" class="panel">
+      <div class="panel-heading"><div><h2>Live camera</h2><p>Full negotiated frame. Browser scaling does not change the inference image.</p></div>
+        <button id="factory-expand" class="button" type="button">Expand Preview</button>
+      </div>
       <img id="factory-preview" class="factory-preview" alt="Live inspection preview">
+      <p id="factory-capture-info" class="field-help">Capture: waiting</p>
+      <p id="factory-yolo-counts" class="field-help">YOLO raw: — · size rejected: — · kept: — · eligible: —</p>
       <p id="factory-position" class="field-help">Position: waiting for a detection</p>
     </article>
     <article id="factory-latest" class="panel status-idle">

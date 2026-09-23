@@ -14,12 +14,26 @@ from typing import Any
 import cv2
 import numpy as np
 
-from glove_chirality.camera import open_camera
+from glove_chirality.camera import camera_geometry_status, open_camera
 from glove_chirality.config import ExtractionConfig
 from glove_chirality.models import CLASSIFIER_CHOICES
 
 MODES = ("preview", "shadow", "armed")
 BELT_DIRECTIONS = ("left_to_right", "right_to_left", "top_to_bottom", "bottom_to_top")
+GRIP_CAMERA = {
+    "backend": "DirectShow",
+    "width": 1920,
+    "height": 1080,
+    "fourcc": "MJPG",
+    "fps": None,
+}
+GRIP_GEOMETRY = {
+    "roi": (0.12, 0.03, 0.98, 0.995),
+    "trigger_zone": (0.15, 0.10, 0.97, 0.96),
+    "belt_direction": "bottom_to_top",
+    "trigger_line_enabled": True,
+    "trigger_line_fraction": 0.5,
+}
 DISPLAY_NAMES = {
     "tiny_cnn": "TinyCNN",
     "resnet18": "ResNet18",
@@ -30,6 +44,42 @@ DISPLAY_NAMES = {
     "dinov3_convnext_tiny": "DINOv3 ConvNeXt Tiny",
     "dinov3_vit_small": "DINOv3 ViT-Small",
 }
+
+
+def camera_request(options: dict[str, Any]) -> dict[str, Any]:
+    preset = str(options.get("camera_preset") or "auto")
+    if preset == "grip_1080p":
+        return dict(GRIP_CAMERA)
+    if preset != "custom":
+        return {}
+
+    def optional_number(key: str, caster):
+        value = options.get(key)
+        if value in {None, ""}:
+            return None
+        return caster(value)
+
+    fourcc = str(options.get("camera_fourcc") or "").strip().upper() or None
+    backend = str(options.get("camera_backend") or "").strip() or None
+    return {
+        "backend": backend,
+        "width": optional_number("camera_width", int),
+        "height": optional_number("camera_height", int),
+        "fps": optional_number("camera_fps", float),
+        "fourcc": fourcc,
+    }
+
+
+def apply_grip_geometry(config: ExtractionConfig) -> ExtractionConfig:
+    """Apply the current-camera geometry in memory. Does not write YAML."""
+    config.detector.roi = GRIP_GEOMETRY["roi"]
+    config.detector.trigger_zone = GRIP_GEOMETRY["trigger_zone"]
+    config.detector.validate()
+    config.event.belt_direction = GRIP_GEOMETRY["belt_direction"]
+    config.event.trigger_line_enabled = True
+    config.event.trigger_line_fraction = GRIP_GEOMETRY["trigger_line_fraction"]
+    config.event.validate()
+    return config
 
 
 def default_models_root(workdir: str | Path) -> Path:
@@ -77,28 +127,54 @@ def scan_cameras(
     found: list[dict[str, Any]] = []
     for index in indices:
         try:
-            opened = open_camera(index) if capture_factory is None else open_camera(
-                index, capture_factory=capture_factory
-            )
+            opened = _open_scan_camera(index, capture_factory)
         except RuntimeError:
             continue
         try:
-            found.append(
-                {
-                    "index": index,
-                    "backend": opened.backend,
-                    "width": opened.width,
-                    "height": opened.height,
-                    "fps": opened.fps,
-                    "label": (
-                        f"Camera {index} | {opened.backend} | "
-                        f"{opened.width}x{opened.height} | {opened.fps:.0f} FPS"
-                    ),
-                }
-            )
+            default_size = f"{opened.width}x{opened.height}"
+            hd_available = (opened.width, opened.height) == (1920, 1080)
         finally:
             opened.capture.release()
+        if not hd_available:
+            try:
+                probed = _open_scan_camera(
+                    index,
+                    capture_factory,
+                    preferred_backend="DirectShow",
+                    requested_width=1920,
+                    requested_height=1080,
+                    preferred_fourcc="MJPG",
+                )
+            except RuntimeError:
+                probed = None
+            if probed is not None:
+                try:
+                    hd_available = (probed.width, probed.height) == (1920, 1080)
+                finally:
+                    probed.capture.release()
+        hd_text = "1920x1080 GRIP mode" if default_size == "1920x1080" else (
+            "1080p available" if hd_available else "1080p unavailable"
+        )
+        found.append(
+            {
+                "index": index,
+                "backend": opened.backend,
+                "width": opened.width,
+                "height": opened.height,
+                "fps": opened.fps,
+                "hd_available": hd_available,
+                "label": (
+                    f"Camera {index} | {opened.backend} | default {default_size} | {hd_text}"
+                ),
+            }
+        )
     return found
+
+
+def _open_scan_camera(index: int, capture_factory, **kwargs):
+    if capture_factory is None:
+        return open_camera(index, **kwargs)
+    return open_camera(index, capture_factory=capture_factory, **kwargs)
 
 
 def discover_configs(workdir: str | Path) -> list[dict[str, Any]]:
@@ -255,6 +331,12 @@ class FactoryLiveSession:
         self._delay_ms = 850
         self._started_wall: str | None = None
         self._checkpoint_sha256: str | None = None
+        self._camera_request: dict[str, Any] = {}
+        self._camera_actual: dict[str, Any] = {}
+        self._geometry_override = "yaml"
+        self._show_rejected = False
+        self._yolo_counts: dict[str, Any] = {}
+        self._active_detector = None
         self._options: dict[str, Any] = {}
 
     @staticmethod
@@ -381,7 +463,12 @@ class FactoryLiveSession:
         if not config_path.is_file():
             raise ValueError(f"Extraction config not found: {config_path}")
         config = ExtractionConfig.from_yaml(config_path)
-        self._apply_trigger_overrides(config, options)
+        if str(options.get("geometry") or "yaml") == "grip":
+            apply_grip_geometry(config)
+        else:
+            self._apply_trigger_overrides(config, options)
+        self._camera_request = camera_request(options)
+        self._geometry_override = "grip" if str(options.get("geometry") or "yaml") == "grip" else "yaml"
         checkpoint = str(options.get("checkpoint", "")).strip()
         if not checkpoint or not Path(checkpoint).is_file():
             raise ValueError(f"Classifier checkpoint not found: {checkpoint}")
@@ -504,6 +591,24 @@ class FactoryLiveSession:
             "actuator_delay_ms": self._delay_ms,
             "fault": self.fault,
             "status": self.status,
+            "geometry_override": self._geometry_override,
+            "effective_roi": None if self._config is None else list(self._config.detector.roi),
+            "effective_trigger_zone": None if self._config is None else list(self._config.detector.trigger_zone),
+            "effective_belt_direction": None if self._config is None else self._config.event.belt_direction,
+            "yolo_imgsz": None if self._config is None else self._config.detector.yolo_imgsz,
+            "yolo_min_box_area_ratio": None if self._config is None else self._config.detector.yolo_min_box_area_ratio,
+            "yolo_max_box_area_ratio": None if self._config is None else self._config.detector.yolo_max_box_area_ratio,
+            "requested_camera_width": self._camera_request.get("width"),
+            "requested_camera_height": self._camera_request.get("height"),
+            "requested_camera_fps": self._camera_request.get("fps"),
+            "requested_fourcc": self._camera_request.get("fourcc"),
+            "preferred_backend": self._camera_request.get("backend"),
+            "actual_camera_width": self._camera_actual.get("width"),
+            "actual_camera_height": self._camera_actual.get("height"),
+            "actual_camera_fps": self._camera_actual.get("fps"),
+            "actual_backend": self._camera_actual.get("backend"),
+            "actual_fourcc": self._camera_actual.get("fourcc"),
+            "camera_geometry_warning": self._camera_actual.get("warning"),
         }
         (self.session_dir / "session.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -526,6 +631,7 @@ class FactoryLiveSession:
             if self._stop.is_set():
                 return
             detector = injected.get("detector") or build_detector(config.detector)
+            self._active_detector = detector
             self._set_status("Loading Layer-2 classifier...")
             if self._stop.is_set():
                 return
@@ -554,7 +660,9 @@ class FactoryLiveSession:
             capture = injected.get("capture") or LatestFrameCapture(
                 parse_capture_source(str(self._options.get("source"))),
                 config.runtime.capture_queue_size,
+                camera_mode=self._camera_request,
             )
+            self._record_camera(capture)
             self._set_status("Warming models...")
             runner(
                 self._options.get("source"),
@@ -594,6 +702,39 @@ class FactoryLiveSession:
             self._write_session()
             self._close_logs()
 
+    def set_display(self, *, show_size_rejected: bool) -> None:
+        self._show_rejected = bool(show_size_rejected)
+
+    def _rejected_boxes(self):
+        diagnostics = getattr(self._active_detector, "last_diagnostics", None)
+        return tuple(getattr(diagnostics, "size_rejected", ()) or ())
+
+    def _record_camera(self, capture) -> None:
+        opened = getattr(capture, "opened", None)
+        if opened is None:
+            return
+        status = camera_geometry_status(
+            opened.requested_width,
+            opened.requested_height,
+            opened.width,
+            opened.height,
+        )
+        with self._lock:
+            self._camera_actual = {
+                "backend": opened.backend,
+                "width": opened.width,
+                "height": opened.height,
+                "fps": opened.fps,
+                "fourcc": opened.actual_fourcc,
+                "requested_width": opened.requested_width,
+                "requested_height": opened.requested_height,
+                "requested_fps": opened.requested_fps,
+                "requested_fourcc": opened.requested_fourcc,
+                "matches": status["matches"],
+                "warning": status["warning"],
+            }
+        self._write_session()
+
     def _on_frame(self, frame: np.ndarray, result, timestamp_s: float) -> None:
         del timestamp_s
         from glove_chirality.overlay import detection_states, draw_live_overlay
@@ -601,24 +742,40 @@ class FactoryLiveSession:
         config = self._config
         if config is None:
             return
-        annotated = draw_live_overlay(frame, config, result.detections)
+        annotated = draw_live_overlay(
+            frame,
+            config,
+            result.detections,
+            rejected=self._rejected_boxes(),
+            show_rejected=self._show_rejected,
+        )
         height, width = frame.shape[:2]
         states = detection_states(config, result.detections, width, height)
         positions = []
+        frame_area = max(1, width * height)
         for detection, state in zip(result.detections, states):
             cx, cy = detection.center
             positions.append(
                 {
                     "state": state,
                     "confidence": detection.confidence,
+                    "area_ratio": detection.area / frame_area,
                     "bbox": [detection.x1, detection.y1, detection.x2, detection.y2],
                     "center_px": [cx, cy],
                     "center_norm": [cx / max(width, 1), cy / max(height, 1)],
                 }
             )
+        diagnostics = getattr(self._active_detector, "last_diagnostics", None)
+        counts = {
+            "raw": getattr(diagnostics, "raw_yolo_count", None),
+            "size_rejected": getattr(diagnostics, "size_rejected_count", None),
+            "kept": getattr(diagnostics, "returned_detection_count", len(result.detections)),
+            "eligible": sum(state == "ELIGIBLE" for state in states),
+        }
         with self._lock:
             self._latest_frame = annotated
             self._positions = positions
+            self._yolo_counts = counts
 
     def _on_metrics(self, metrics: dict[str, Any]) -> None:
         with self._lock:
@@ -730,6 +887,12 @@ class FactoryLiveSession:
                 "events": [dict(item) for item in self._events],
                 "serial": serial,
                 "cuda": device_status(),
+                "camera_actual": dict(self._camera_actual),
+                "camera_request": dict(self._camera_request),
+                "geometry_override": self._geometry_override,
+                "geometry_warning": self._camera_actual.get("warning"),
+                "yolo_counts": dict(self._yolo_counts),
+                "yolo_imgsz": None if self._config is None else self._config.detector.yolo_imgsz,
             }
             if reveal_paths:
                 payload.update(

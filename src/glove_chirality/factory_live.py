@@ -46,12 +46,25 @@ DISPLAY_NAMES = {
 }
 
 
+def requested_fps(value) -> float | None:
+    text = str(value or "").strip().lower()
+    if text in {"", "auto", "none"}:
+        return None
+    fps = float(text)
+    if fps not in {15.0, 20.0, 25.0, 30.0, 60.0}:
+        raise ValueError("camera FPS must be auto, 15, 20, 25, 30, or 60")
+    return fps
+
+
 def camera_request(options: dict[str, Any]) -> dict[str, Any]:
     preset = str(options.get("camera_preset") or "auto")
+    fps = requested_fps(options.get("camera_fps"))
     if preset == "grip_1080p":
-        return dict(GRIP_CAMERA)
+        request = dict(GRIP_CAMERA)
+        request["fps"] = fps
+        return request
     if preset != "custom":
-        return {}
+        return {"fps": fps} if fps is not None else {}
 
     def optional_number(key: str, caster):
         value = options.get(key)
@@ -65,7 +78,7 @@ def camera_request(options: dict[str, Any]) -> dict[str, Any]:
         "backend": backend,
         "width": optional_number("camera_width", int),
         "height": optional_number("camera_height", int),
-        "fps": optional_number("camera_fps", float),
+        "fps": fps,
         "fourcc": fourcc,
     }
 
@@ -394,6 +407,9 @@ class FactoryLiveSession:
         self._jpeg_at = 0.0
         self._preview_encode_ms: float | None = None
         self._device_status = device_status()
+        self._decision = {"phase": "WAITING"}
+        self._settled_phase = "WAITING"
+        self._inspecting_until = 0.0
         self._options: dict[str, Any] = {}
 
     @staticmethod
@@ -736,6 +752,7 @@ class FactoryLiveSession:
                 frame_callback=self._on_frame,
                 metrics_callback=self._on_metrics,
                 status_callback=self._set_status,
+                before_classify=self.note_classifying,
                 stop_event=self._stop,
                 session_id=self.session_id,
                 config_path=self.config_path,
@@ -758,6 +775,22 @@ class FactoryLiveSession:
                     self._remember_mode("shadow")
             self._write_session()
             self._close_logs()
+
+    def note_classifying(self) -> None:
+        with self._lock:
+            self._decision = {"phase": "CLASSIFYING"}
+            self._inspecting_until = time.monotonic() + 2.0
+
+    def decision(self) -> dict[str, Any]:
+        now = time.monotonic()
+        with self._lock:
+            if self._decision["phase"] == "INSPECTING" and now > self._inspecting_until:
+                self._decision = {"phase": self._settled_phase}
+            return {
+                "phase": self._decision["phase"],
+                "running": self.running,
+                "fault": self.fault,
+            }
 
     def set_display(self, *, show_size_rejected: bool) -> None:
         self._show_rejected = bool(show_size_rejected)
@@ -823,6 +856,7 @@ class FactoryLiveSession:
             "eligible": sum(state == "ELIGIBLE" for state in states),
         }
         now = time.monotonic()
+        inspecting = bool(result.detections)
         source = None
         if self._preview_source is None or (
             now <= self._preview_wanted_until and now - self._preview_stamp >= 0.1
@@ -831,6 +865,12 @@ class FactoryLiveSession:
         with self._lock:
             self._positions = positions
             self._yolo_counts = counts
+            phase = self._decision["phase"]
+            if inspecting and phase != "CLASSIFYING":
+                self._decision = {"phase": "INSPECTING"}
+                self._inspecting_until = now + 0.35
+            elif phase == "INSPECTING" and now > self._inspecting_until:
+                self._decision = {"phase": self._settled_phase}
             if source is not None:
                 self._preview_source = source
                 self._preview_detections = tuple(result.detections)
@@ -891,6 +931,15 @@ class FactoryLiveSession:
         record["would_reject"] = mode == "shadow" and status == "accepted" and prediction == reject_class
         record["actuator_command"] = command.strip() if command else None
         record["classifier_ran"] = status == "accepted" and prediction is not None
+        if status == "accepted" and prediction == reject_class:
+            phase = "REJECT"
+        elif status == "accepted" and prediction:
+            phase = "PASS"
+        else:
+            phase = "NO DECISION"
+        with self._lock:
+            self._settled_phase = phase
+            self._decision = {"phase": phase}
         if command:
             with self._lock:
                 self._commanded.add(event_id)

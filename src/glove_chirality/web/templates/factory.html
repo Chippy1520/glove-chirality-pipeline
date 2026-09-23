@@ -15,11 +15,21 @@
         </select>
         <small class="field-help">GRIP 1080p requests DirectShow, MJPG, and 1920x1080 before the first frame. YOLO imgsz stays 640. Auto keeps the camera default.</small>
       </label>
+      <label class="field"><span>Camera FPS</span>
+        <select id="factory-camera-fps">
+          <option value="auto" selected>Auto</option>
+          <option value="15">15</option>
+          <option value="20">20</option>
+          <option value="25">25</option>
+          <option value="30">30</option>
+          <option value="60">60</option>
+        </select>
+        <small class="field-help">Requested before the first frame. The reported FPS is the negotiated value, not the request. Auto does not force a rate.</small>
+      </label>
       <div id="factory-camera-custom" hidden>
         <label class="field"><span>Backend</span><input id="factory-camera-backend" value="DirectShow"></label>
         <label class="field"><span>Requested width</span><input id="factory-camera-width" type="number" value="1920" min="1"></label>
         <label class="field"><span>Requested height</span><input id="factory-camera-height" type="number" value="1080" min="1"></label>
-        <label class="field"><span>Requested FPS</span><input id="factory-camera-fps" type="number" min="0" step="1" placeholder="Auto"></label>
         <label class="field"><span>FourCC</span><select id="factory-camera-fourcc"><option value="">Auto</option><option value="MJPG" selected>MJPG</option></select></label>
       </div>
       <label class="field"><span>Camera</span>
@@ -133,13 +143,17 @@
       <p id="factory-yolo-counts" class="field-help">YOLO raw: — · size rejected: — · kept: — · eligible: —</p>
       <p id="factory-position" class="field-help">Position: waiting for a detection</p>
     </article>
-    <article id="factory-latest" class="panel status-idle">
-      <p class="eyebrow">Latest result</p>
-      <h2 class="factory-alert">Idle</h2>
-      <p>No passage yet.</p>
-      <img id="factory-crop" class="factory-crop" alt="Canonical Layer-2 crop" hidden>
+    <article id="factory-decision" class="decision-card decision-waiting" aria-live="assertive">
+      <p class="eyebrow">Live decision</p>
+      <h2 id="factory-decision-label">WAITING</h2>
     </article>
   </div>
+
+  <details class="panel" id="factory-diagnostics">
+    <summary>Diagnostics</summary>
+    <p id="factory-latest-detail" class="field-help">Confidence, crop, timestamps, and detector details stay here and in the session log.</p>
+    <img id="factory-crop" class="factory-crop" alt="Canonical Layer-2 crop" hidden>
+  </details>
 
   <div class="metric-grid">
     <article class="metric-card"><span>Accepted</span><strong id="count-accepted">0</strong></article>

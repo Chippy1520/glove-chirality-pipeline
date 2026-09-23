@@ -120,7 +120,7 @@
     const request = status.camera_request || {};
     const requested = request.width && request.height ? `${request.width}x${request.height}` : "auto";
     const actual = camera.width && camera.height ? `${camera.width}x${camera.height}` : "—";
-    $("#factory-capture-info").textContent = `Capture: ${actual} · Requested: ${requested} · Backend: ${camera.backend || "—"} · FourCC: ${camera.fourcc || request.fourcc || "auto"} · Inference frame unchanged · Preview encode: ${status.preview_encode_ms == null ? "—" : Number(status.preview_encode_ms).toFixed(1)} ms · YOLO imgsz: ${status.yolo_imgsz || 640}`;
+    $("#factory-capture-info").textContent = `Capture: ${actual} · Requested: ${requested} · FPS requested ${request.fps || "auto"} · actual ${camera.fps ?? "—"} · Backend: ${camera.backend || "—"} · FourCC: ${camera.fourcc || request.fourcc || "auto"} · Inference frame unchanged · Preview encode: ${status.preview_encode_ms == null ? "—" : Number(status.preview_encode_ms).toFixed(1)} ms · YOLO imgsz: ${status.yolo_imgsz || 640}`;
     const warning = $("#factory-geometry-warning");
     if (status.geometry_warning) {
       warning.hidden = false;
@@ -134,38 +134,51 @@
     $("#factory-position").textContent = positions.length
       ? positions.map((item) => `${item.state} X=${Number(item.center_px[0]).toFixed(0)} px, Y=${Number(item.center_px[1]).toFixed(0)} px · ${Number(item.center_norm[0]).toFixed(3)}, ${Number(item.center_norm[1]).toFixed(3)}`).join(" | ")
       : "Position: waiting for a detection";
-    renderLatest(status.latest, status.reject_class || "right");
+    renderDiagnostics(status.latest, status.reject_class || "right");
     renderEvents(status.events || []);
     if (document.body.dataset.local === "true" && running) startPreview();
     else stopPreview();
     maybeBeep(status.latest, status.reject_class || "right");
   }
 
-  function renderLatest(latest, rejectClass) {
-    const panel = $("#factory-latest");
+  const decisionClass = {
+    WAITING: "decision-waiting",
+    INSPECTING: "decision-inspecting",
+    CLASSIFYING: "decision-classifying",
+    PASS: "decision-pass",
+    REJECT: "decision-reject",
+    "NO DECISION": "decision-none",
+  };
+
+  function renderDecision(decision) {
+    const card = $("#factory-decision");
+    const label = $("#factory-decision-label");
+    if (!card || !label) return;
+    const phase = decision && decision.phase ? decision.phase : "WAITING";
+    label.textContent = phase;
+    card.className = `decision-card ${decisionClass[phase] || "decision-waiting"}`;
+  }
+
+  function renderDiagnostics(latest, rejectClass) {
+    const detail = $("#factory-latest-detail");
     const crop = $("#factory-crop");
+    if (!detail || !crop) return;
     if (!latest) {
-      panel.className = "panel status-idle";
-      panel.innerHTML = "<p class=\"eyebrow\">Latest result</p><h2 class=\"factory-alert\">Idle</h2><p>No passage yet.</p>";
-      panel.append(crop);
+      detail.textContent = "Confidence, crop, timestamps, and detector details stay here and in the session log.";
       crop.hidden = true;
       return;
     }
     const accepted = latest.status === "accepted";
-    const reject = accepted && latest.prediction === rejectClass;
-    const pass = accepted && latest.prediction && latest.prediction !== rejectClass;
-    panel.className = `panel ${reject ? "status-reject" : pass ? "status-pass" : accepted ? "status-idle" : "status-pipeline"}`;
-    const title = reject
-      ? "REJECT / RIGHT GLOVE DETECTED - REJECT"
-      : pass
-        ? "PASS / LEFT GLOVE"
-        : `${latest.reject_reason || latest.status}`;
-    const confidence = accepted && latest.prediction != null
-      ? `Layer-2 confidence ${Number(latest.confidence).toFixed(3)}`
-      : "Classifier not run";
-    const position = latest.center_px ? `X=${Number(latest.center_px[0]).toFixed(0)}, Y=${Number(latest.center_px[1]).toFixed(0)}` : "—";
-    panel.innerHTML = `<p class="eyebrow">Latest result</p><h2 class="factory-alert">${title}</h2><p>${confidence}</p><p>Detector ${latest.detector_confidence ?? "—"} · ${latest.event_id || ""} · ${latest.wall_time_iso || ""}</p><p>Position ${position} · crossing ${latest.trigger_crossing_wall_time_iso || "not observed"} · classifier ${latest.classifier_ms ?? "—"} ms</p>`;
-    panel.append(crop);
+    detail.textContent = [
+      accepted ? `Layer-2 ${latest.prediction || "—"} ${latest.confidence == null ? "" : Number(latest.confidence).toFixed(3)}` : "Classifier not run",
+      `Detector ${latest.detector_confidence ?? "—"}`,
+      latest.event_id || "",
+      latest.wall_time_iso || "",
+      latest.center_px ? `X=${Number(latest.center_px[0]).toFixed(0)} Y=${Number(latest.center_px[1]).toFixed(0)}` : "",
+      `crossing ${latest.trigger_crossing_wall_time_iso || "not observed"}`,
+      `classifier ${latest.classifier_ms ?? "—"} ms`,
+      `reject class ${rejectClass}`,
+    ].filter(Boolean).join(" · ");
     if (document.body.dataset.local === "true" && latest.event_id && latest.event_id !== lastCropEvent && accepted) {
       lastCropEvent = latest.event_id;
       crop.hidden = false;
@@ -390,6 +403,9 @@
         }
       });
     });
+    window.setInterval(async () => {
+      try { renderDecision(await api("/api/factory/decision")); } catch (_error) { /* viewer may be unauthenticated */ }
+    }, 100);
     window.setInterval(async () => {
       try { render(await api("/api/factory/status")); } catch (_error) { /* viewer may be unauthenticated */ }
     }, 400);

@@ -30,6 +30,10 @@ def _flag(value) -> bool:
 
 
 def register_factory_routes(app, factory: FactoryLiveSession, host_only) -> None:
+    @app.get("/api/factory/decision")
+    def factory_decision():
+        return jsonify(factory.decision())
+
     @app.get("/api/factory/status")
     def factory_status():
         return jsonify(factory.snapshot(reveal_paths=True))
@@ -169,6 +173,10 @@ def register_factory_routes(app, factory: FactoryLiveSession, host_only) -> None
 
 def register_factory_viewer(app, factory: FactoryLiveSession) -> None:
     """Read-only status. No frames, serial, start, or configuration routes."""
+
+    @app.get("/api/factory/decision")
+    def factory_viewer_decision():
+        return jsonify(factory.decision())
 
     @app.get("/api/factory/status")
     def factory_viewer_status():

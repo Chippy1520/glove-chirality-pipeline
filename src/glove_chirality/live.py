@@ -268,6 +268,7 @@ def run_live_inference(
     frame_callback: Callable[[np.ndarray, FrameResult, float], None] | None = None,
     metrics_callback: Callable[[dict], None] | None = None,
     status_callback: Callable[[str], None] | None = None,
+    before_classify: Callable[[], None] | None = None,
     stop_event: threading.Event | None = None,
     session_id: str | None = None,
     config_path: str | None = None,
@@ -312,6 +313,8 @@ def run_live_inference(
         confidence = None
         classifier_ms = None
         if outcome.accepted and classify_now():
+            if before_classify is not None:
+                before_classify()
             classifier_start = time.perf_counter()
             prediction, confidence = classifier.predict_array(outcome.crop)
             classifier_ms = (time.perf_counter() - classifier_start) * 1000.0

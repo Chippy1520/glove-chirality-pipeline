@@ -166,3 +166,14 @@ def test_low_latency_sets_buffer_before_first_read():
     )
     assert capture.sets_before_read[0][0] == cv2.CAP_PROP_BUFFERSIZE
     assert capture.sets_before_read[0][1] == 1
+
+
+def test_requested_fps_is_set_before_first_read():
+    capture = _ModeCapture(np.zeros((8, 8, 3), dtype=np.uint8))
+    open_camera(
+        0,
+        backends=(CameraBackend("DirectShow", 1),),
+        capture_factory=lambda *_args: capture,
+        requested_fps=30,
+    )
+    assert capture.sets_before_read[0] == (cv2.CAP_PROP_FPS, 30.0)

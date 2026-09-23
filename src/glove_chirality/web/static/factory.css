@@ -22,7 +22,14 @@
 .status-reject { background: #fdecea; color: #b42318; }
 .status-pipeline { background: #fff6e8; color: #a15c07; }
 .status-idle { background: #f2f4f7; color: #667085; }
-.factory-alert { margin: 4px 0 8px; font-size: 28px; line-height: 1.1; }
+.decision-card { margin: 16px 0; padding: 28px 16px; text-align: center; border-radius: 16px; }
+.decision-card h2 { margin: 0; font-size: clamp(64px, 12vw, 140px); line-height: 0.95; letter-spacing: 0.04em; }
+.decision-waiting { background: #f2f4f7; color: #344054; }
+.decision-inspecting { background: #fff6e8; color: #a15c07; }
+.decision-classifying { background: #e8f1ff; color: #1849a9; }
+.decision-pass { background: #e8f7f0; color: #087a55; }
+.decision-reject { background: #fdecea; color: #b42318; }
+.decision-none { background: #eef2f6; color: #475467; }
 #arm-dialog { border: 0; border-radius: 14px; padding: 0; max-width: 460px; }
 #arm-dialog::backdrop { background: rgb(16 24 40 / 55%); }
 .arm-card { padding: 22px; }

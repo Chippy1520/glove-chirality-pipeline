@@ -51,6 +51,8 @@ class _Passage:
     event_emitted: bool = False
     crossing_s: float | None = None
     crossing_px: tuple[float, float] | None = None
+    first_along: float = 0.0
+    separated: bool = False
     candidates: list[_Candidate] = field(default_factory=list)
 
 
@@ -83,6 +85,11 @@ class PassageTracker:
         pairs, unmatched, unmatched_strong = _associate(
             self._passages, strong, width, height, self.config, relaxed=False
         )
+        self._mark_separated(pairs)
+        if self.config.event.merge_recovery:
+            pairs, unmatched_strong = self._recover_merged(pairs, unmatched_strong, strong)
+            matched = {id(track) for track, _detection in pairs}
+            unmatched = [track for track in self._passages if id(track) not in matched]
         for track, detection in pairs:
             self._update_track(track, detection, timestamp_s, frame, frame_index, width, height, weak=False)
         if self.config.event.low_conf_recovery and weak and unmatched:
@@ -202,6 +209,7 @@ class PassageTracker:
             first_seen_s=timestamp_s,
             last_seen_s=timestamp_s,
             strong_hits=1,
+            first_along=cy if _motion_axis(self.config) == "y" else cx,
         )
         self._next_passage_id += 1
         pixels = frame[detection.y1:detection.y2, detection.x1:detection.x2].copy()
@@ -284,14 +292,68 @@ class PassageTracker:
             self._ledger.append(track)
         return outcomes
 
+    def _mark_separated(self, pairs) -> None:
+        axis = _cross_axis(self.config)
+        for index, (left, left_det) in enumerate(pairs):
+            for right, right_det in pairs[index + 1 :]:
+                if left_det is right_det:
+                    continue
+                gap = abs(_cross(left_det.center, axis) - _cross(right_det.center, axis))
+                width = max(left_det.width, right_det.width, 1)
+                if gap >= 0.85 * width:
+                    left.separated = True
+                    right.separated = True
+
+    def _recover_merged(self, pairs, unmatched_strong, strong):
+        extra: list[tuple[_Passage, Detection]] = []
+        consumed: set[int] = set()
+        replaced: set[int] = set()
+        for detection in strong:
+            covered = [
+                track
+                for track in self._passages
+                if track.strong_hits >= 2
+                and not track.event_emitted
+                and track.separated
+                and _claims(track, detection, self.config)
+            ]
+            if len(covered) < 2 or not _still_apart(covered, self.config):
+                continue
+            pieces = [_slice_for_track(track, detection, self.config) for track in covered]
+            if any(piece is None for piece in pieces):
+                continue
+            if any(
+                _box_iou(left, right) > 0.85
+                for index, left in enumerate(pieces)
+                for right in pieces[index + 1 :]
+            ):
+                continue
+            consumed.add(id(detection))
+            replaced.update(id(track) for track in covered)
+            extra.extend(zip(covered, pieces, strict=True))
+        if not extra:
+            return pairs, unmatched_strong
+        kept = [
+            (track, detection)
+            for track, detection in pairs
+            if id(track) not in replaced and id(detection) not in consumed
+        ]
+        kept.extend(extra)
+        return kept, [item for item in unmatched_strong if id(item) not in consumed]
+
     def _duplicate(self, track: _Passage, width: int, height: int) -> bool:
         if track.crossing_px is None or track.crossing_s is None:
             return False
-        axis, _line = trigger_line_position(self.config, width, height)
+        axis, line = trigger_line_position(self.config, width, height)
+        increasing = _direction_increasing(self.config.event.belt_direction)
         current = track.crossing_px[0] if axis == "y" else track.crossing_px[1]
         limit = 0.75 * max(track.detection.width, track.detection.height, 1)
         for prior in self._ledger:
             if prior is track or prior.crossing_s is None or prior.crossing_px is None:
+                continue
+            if track.first_seen_s >= prior.crossing_s and _upstream(
+                track.first_along, line, 0.0, increasing
+            ):
                 continue
             if abs(track.crossing_s - prior.crossing_s) > 0.75:
                 continue
@@ -300,6 +362,50 @@ class PassageTracker:
                 track.passage_id = prior.passage_id
                 return True
         return False
+
+
+def _motion_axis(config: ExtractionConfig) -> str:
+    if config.event.belt_direction in {"bottom_to_top", "top_to_bottom"}:
+        return "y"
+    return "x"
+
+
+def _cross_axis(config: ExtractionConfig) -> str:
+    return "x" if _motion_axis(config) == "y" else "y"
+
+
+def _cross(point, axis: str) -> float:
+    return float(point[0] if axis == "x" else point[1])
+
+
+def _claims(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
+    cross = _cross(track.predicted, _cross_axis(config))
+    if _cross_axis(config) == "x":
+        return detection.x1 <= cross <= detection.x2
+    return detection.y1 <= cross <= detection.y2
+
+
+def _slice_for_track(track: _Passage, merged: Detection, config: ExtractionConfig) -> Detection | None:
+    cross = _cross(track.predicted, _cross_axis(config))
+    half = max(track.detection.width, track.detection.height, 8) / 2
+    if _cross_axis(config) == "x":
+        x1 = max(merged.x1, round(cross - half))
+        x2 = min(merged.x2, round(cross + half))
+        y1, y2 = merged.y1, merged.y2
+    else:
+        y1 = max(merged.y1, round(cross - half))
+        y2 = min(merged.y2, round(cross + half))
+        x1, x2 = merged.x1, merged.x2
+    if x2 - x1 < 8 or y2 - y1 < 8:
+        return None
+    return Detection(x1, y1, x2, y2, merged.confidence)
+
+
+def _still_apart(tracks: list[_Passage], config: ExtractionConfig) -> bool:
+    axis = _cross_axis(config)
+    points = [_cross(track.predicted, axis) for track in tracks]
+    width = max(track.detection.width for track in tracks)
+    return max(points) - min(points) >= 0.45 * max(width, 1)
 
 
 def _associate(tracks, detections, width, height, config: ExtractionConfig, *, relaxed: bool):

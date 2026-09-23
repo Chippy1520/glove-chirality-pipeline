@@ -120,6 +120,7 @@ class EventConfig:
     new_track_conf: float = 0.45
     reentry_time_s: float = 0.50
     trigger_hysteresis_ratio: float = 0.0
+    merge_recovery: bool = False
 
     def __post_init__(self):
         self.validate()

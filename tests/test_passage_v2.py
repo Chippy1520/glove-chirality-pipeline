@@ -111,10 +111,64 @@ def test_fragmented_reentry_near_the_same_crossing_does_not_emit_again():
         [_box(100, 60, 0.8)],
         [],
         [],
-        [_box(100, 140, 0.8)],
-        [_box(100, 60, 0.8)],
+        [_box(100, 75, 0.8)],
+        [_box(100, 55, 0.8)],
     ], config)
     assert len(accepted) == 1
+
+
+def test_merge_recovery_off_still_skips_the_second_glove():
+    accepted = _run([
+        [_box(50, 160), _box(150, 160)],
+        [_box(50, 140), _box(150, 140)],
+        [Detection(20, 70, 180, 120, 0.8)],
+        [Detection(20, 40, 180, 90, 0.8)],
+    ])
+    assert len(accepted) == 1
+
+
+def test_merged_blob_keeps_two_already_separated_gloves():
+    config = _config()
+    config.event.merge_recovery = True
+    config.event.validate()
+    accepted = _run([
+        [_box(50, 160), _box(150, 160)],
+        [_box(50, 140), _box(150, 140)],
+        [Detection(20, 70, 180, 120, 0.8)],
+        [Detection(20, 40, 180, 90, 0.8)],
+    ], config)
+    assert len(accepted) == 2
+    assert len({item.event_id for item in accepted}) == 2
+    assert all(item.detection is not None and item.detection.width < 160 for item in accepted)
+
+
+def test_wrinkle_split_still_emits_one_crop():
+    config = _config()
+    config.event.merge_recovery = True
+    config.event.validate()
+    accepted = _run([
+        [Detection(70, 145, 110, 175, 0.8), Detection(90, 145, 130, 175, 0.8)],
+        [Detection(70, 125, 110, 155, 0.8), Detection(90, 125, 130, 155, 0.8)],
+        [Detection(70, 40, 130, 80, 0.8)],
+    ], config)
+    assert len(accepted) == 1
+
+
+def test_same_lane_glove_half_a_second_later_is_not_a_duplicate():
+    config = _config()
+    config.event.reentry_time_s = 0.15
+    config.event.max_track_distance_ratio = 0.40
+    config.event.validate()
+    accepted = _run([
+        [_box(100, 140, 0.8)],
+        [_box(100, 60, 0.8)],
+        [],
+        [],
+        [],
+        [_box(100, 150, 0.8)],
+        [_box(100, 70, 0.8)],
+    ], config)
+    assert len(accepted) == 2
 
 
 def test_best_pre_cross_frame_is_selected():

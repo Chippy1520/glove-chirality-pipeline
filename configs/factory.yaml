@@ -45,6 +45,7 @@ event:
   reentry_time_s: 0.50
   trigger_hysteresis_ratio: 0.02
   max_track_distance_ratio: 0.12
+  merge_recovery: true
 runtime:
   capture_queue_size: 2
   detect_every_n_frames: 1

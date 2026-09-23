@@ -295,6 +295,54 @@ def _jpeg(image: np.ndarray, quality: int = 80) -> bytes | None:
     return encoded.tobytes() if ok else None
 
 
+def _scale_detection(detection, scale: float):
+    from glove_chirality.types import Detection
+
+    if scale == 1.0:
+        return detection
+    polygon = None
+    if detection.polygon:
+        polygon = tuple((x * scale, y * scale) for x, y in detection.polygon)
+    x1 = int(detection.x1 * scale)
+    y1 = int(detection.y1 * scale)
+    x2 = max(x1 + 1, int(detection.x2 * scale))
+    y2 = max(y1 + 1, int(detection.y2 * scale))
+    return Detection(x1, y1, x2, y2, detection.confidence, detection.class_id, polygon)
+
+
+class _PreviewRejected:
+    def __init__(self, detection, box_area_ratio: float) -> None:
+        self.detection = detection
+        self.box_area_ratio = box_area_ratio
+
+
+def _display_preview(frame, config, detections, rejected, show_rejected) -> np.ndarray:
+    from glove_chirality.overlay import draw_live_overlay
+
+    height, width = frame.shape[:2]
+    scale = 1.0
+    image = frame
+    if width > 1280:
+        scale = 1280 / width
+        image = cv2.resize(
+            frame,
+            (1280, max(1, round(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    scaled = [_scale_detection(item, scale) for item in detections]
+    scaled_rejected = [
+        _PreviewRejected(_scale_detection(item.detection, scale), item.box_area_ratio)
+        for item in rejected
+    ]
+    return draw_live_overlay(
+        image,
+        config,
+        scaled,
+        rejected=scaled_rejected,
+        show_rejected=show_rejected,
+    )
+
+
 class FactoryLiveSession:
     """Host-side factory inspection session. Inference stays on this server."""
 
@@ -337,6 +385,15 @@ class FactoryLiveSession:
         self._show_rejected = False
         self._yolo_counts: dict[str, Any] = {}
         self._active_detector = None
+        self._preview_source: np.ndarray | None = None
+        self._preview_detections: tuple = ()
+        self._preview_rejected: tuple = ()
+        self._preview_stamp = 0.0
+        self._preview_wanted_until = 0.0
+        self._jpeg_cache: bytes | None = None
+        self._jpeg_at = 0.0
+        self._preview_encode_ms: float | None = None
+        self._device_status = device_status()
         self._options: dict[str, Any] = {}
 
     @staticmethod
@@ -737,22 +794,15 @@ class FactoryLiveSession:
 
     def _on_frame(self, frame: np.ndarray, result, timestamp_s: float) -> None:
         del timestamp_s
-        from glove_chirality.overlay import detection_states, draw_live_overlay
-
         config = self._config
         if config is None:
             return
-        annotated = draw_live_overlay(
-            frame,
-            config,
-            result.detections,
-            rejected=self._rejected_boxes(),
-            show_rejected=self._show_rejected,
-        )
+        from glove_chirality.overlay import detection_states
+
         height, width = frame.shape[:2]
         states = detection_states(config, result.detections, width, height)
-        positions = []
         frame_area = max(1, width * height)
+        positions = []
         for detection, state in zip(result.detections, states):
             cx, cy = detection.center
             positions.append(
@@ -772,10 +822,44 @@ class FactoryLiveSession:
             "kept": getattr(diagnostics, "returned_detection_count", len(result.detections)),
             "eligible": sum(state == "ELIGIBLE" for state in states),
         }
+        now = time.monotonic()
+        source = None
+        if self._preview_source is None or (
+            now <= self._preview_wanted_until and now - self._preview_stamp >= 0.1
+        ):
+            source = frame.copy()
         with self._lock:
-            self._latest_frame = annotated
             self._positions = positions
             self._yolo_counts = counts
+            if source is not None:
+                self._preview_source = source
+                self._preview_detections = tuple(result.detections)
+                self._preview_rejected = self._rejected_boxes() if self._show_rejected else ()
+                self._preview_stamp = now
+                self._jpeg_cache = None
+
+    def frame_jpeg(self) -> bytes | None:
+        now = time.monotonic()
+        self._preview_wanted_until = now + 1.0
+        with self._lock:
+            if self._jpeg_cache is not None and now - self._jpeg_at < 0.08:
+                return self._jpeg_cache
+            frame = self._preview_source
+            detections = self._preview_detections
+            rejected = self._preview_rejected
+            config = self._config
+            show = self._show_rejected
+        if frame is None or config is None:
+            return None
+        started = time.perf_counter()
+        preview = _display_preview(frame, config, detections, rejected, show)
+        encoded = _jpeg(preview, 60)
+        elapsed = (time.perf_counter() - started) * 1000.0
+        with self._lock:
+            self._jpeg_cache = encoded
+            self._jpeg_at = time.monotonic()
+            self._preview_encode_ms = elapsed
+        return encoded
 
     def _on_metrics(self, metrics: dict[str, Any]) -> None:
         with self._lock:
@@ -856,13 +940,6 @@ class FactoryLiveSession:
                 self.status = "stopped"
         self._write_session()
 
-    def frame_jpeg(self) -> bytes | None:
-        with self._lock:
-            frame = None if self._latest_frame is None else self._latest_frame.copy()
-        if frame is None:
-            return None
-        return _jpeg(frame, 70)
-
     def crop_jpeg(self) -> bytes | None:
         with self._lock:
             return self._latest_crop
@@ -886,7 +963,8 @@ class FactoryLiveSession:
                 "positions": list(self._positions),
                 "events": [dict(item) for item in self._events],
                 "serial": serial,
-                "cuda": device_status(),
+                "cuda": self._device_status,
+                "preview_encode_ms": self._preview_encode_ms,
                 "camera_actual": dict(self._camera_actual),
                 "camera_request": dict(self._camera_request),
                 "geometry_override": self._geometry_override,

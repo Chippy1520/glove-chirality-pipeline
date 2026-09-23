@@ -140,6 +140,7 @@ def open_camera(
     requested_height: int | None = None,
     requested_fps: float | None = None,
     preferred_fourcc: str | None = None,
+    low_latency: bool = False,
 ) -> OpenedCamera:
     """Open a camera only after a backend returns an actual frame."""
     candidates = list(backends or camera_backends())
@@ -162,6 +163,13 @@ def open_camera(
                 requested_fps=requested_fps,
                 preferred_fourcc=preferred_fourcc,
             )
+            if low_latency:
+                setter = getattr(capture, "set", None)
+                if setter is not None:
+                    try:
+                        setter(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    except (cv2.error, AttributeError, TypeError):
+                        pass
         except RuntimeError:
             capture.release()
             raise

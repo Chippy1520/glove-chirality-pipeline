@@ -46,6 +46,7 @@ class LatestFrameCapture:
                 requested_height=self.camera_mode.get("height"),
                 requested_fps=self.camera_mode.get("fps"),
                 preferred_fourcc=self.camera_mode.get("fourcc"),
+                low_latency=True,
             )
             self.opened = opened
             self.capture = opened.capture

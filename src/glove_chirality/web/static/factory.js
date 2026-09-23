@@ -120,7 +120,7 @@
     const request = status.camera_request || {};
     const requested = request.width && request.height ? `${request.width}x${request.height}` : "auto";
     const actual = camera.width && camera.height ? `${camera.width}x${camera.height}` : "—";
-    $("#factory-capture-info").textContent = `Capture: ${actual} · Requested: ${requested} · Backend: ${camera.backend || "—"} · FourCC: ${camera.fourcc || request.fourcc || "auto"} · Browser display: full frame · Detector ROI inference: ON · YOLO imgsz: ${status.yolo_imgsz || 640}`;
+    $("#factory-capture-info").textContent = `Capture: ${actual} · Requested: ${requested} · Backend: ${camera.backend || "—"} · FourCC: ${camera.fourcc || request.fourcc || "auto"} · Inference frame unchanged · Preview encode: ${status.preview_encode_ms == null ? "—" : Number(status.preview_encode_ms).toFixed(1)} ms · YOLO imgsz: ${status.yolo_imgsz || 640}`;
     const warning = $("#factory-geometry-warning");
     if (status.geometry_warning) {
       warning.hidden = false;
@@ -176,7 +176,7 @@
   function renderEvents(events) {
     const body = $("#factory-events");
     body.replaceChildren();
-    const rows = events.slice(-200).reverse();
+    const rows = events.slice(-40).reverse();
     if (!rows.length) {
       const row = body.insertRow();
       const cell = row.insertCell();
@@ -216,12 +216,18 @@
 
   function startPreview() {
     if (previewTimer) return;
+    let busy = false;
     const tick = () => {
       const image = $("#factory-preview");
-      if (image) image.src = `/api/factory/frame.jpg?t=${Date.now()}`;
+      if (!image || busy) return;
+      busy = true;
+      const done = () => { busy = false; };
+      image.onload = done;
+      image.onerror = done;
+      image.src = `/api/factory/frame.jpg?t=${Date.now()}`;
     };
     tick();
-    previewTimer = window.setInterval(tick, 80);
+    previewTimer = window.setInterval(tick, 120);
   }
 
   function stopPreview() {

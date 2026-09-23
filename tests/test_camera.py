@@ -154,3 +154,15 @@ def test_omitted_resolution_does_not_call_set():
     )
     assert capture.sets == []
     assert opened.geometry_matches is None
+
+
+def test_low_latency_sets_buffer_before_first_read():
+    capture = _ModeCapture(np.zeros((8, 8, 3), dtype=np.uint8))
+    open_camera(
+        0,
+        backends=(CameraBackend("DirectShow", 1),),
+        capture_factory=lambda *_args: capture,
+        low_latency=True,
+    )
+    assert capture.sets_before_read[0][0] == cv2.CAP_PROP_BUFFERSIZE
+    assert capture.sets_before_read[0][1] == 1

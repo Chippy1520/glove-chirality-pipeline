@@ -135,3 +135,35 @@ def test_live_classifier_runs_once_per_accepted_physical_event():
     assert len(emitted) == 1
     assert emitted[0]["status"] == "accepted"
     assert emitted[0]["prediction"] == "right"
+    assert emitted[0]["timestamp_s"] == emitted[0]["timestamp"]
+    assert emitted[0]["confidence"] == 0.94
+    assert emitted[0]["wall_time_iso"]
+
+
+def test_frame_callback_sees_existing_detections_without_extra_detect_calls():
+    frame = np.full((24, 24, 3), 80, dtype=np.uint8)
+    detector = _Detector([[]])
+    seen = []
+
+    def on_frame(image, result, timestamp_s):
+        seen.append((image.shape, tuple(result.detections), timestamp_s))
+
+    config = ExtractionConfig(
+        detector=DetectorConfig(roi=(0, 0, 1, 1), trigger_zone=(0, 0, 1, 1)),
+        event=EventConfig(output_size=16),
+        runtime=RuntimeConfig(report_interval_seconds=60, warmup=False),
+    )
+    run_live_inference(
+        0,
+        "unused.pt",
+        config,
+        event_callback=lambda _payload: None,
+        frame_callback=on_frame,
+        detector=detector,
+        classifier=_Classifier(),
+        capture=_ImmediateCapture([(0, frame)]),
+        max_processed_frames=1,
+    )
+    assert detector.warmups == 0
+    assert seen == [((24, 24, 3), (), seen[0][2])]
+    assert seen[0][2] >= 0

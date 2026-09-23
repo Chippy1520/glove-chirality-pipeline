@@ -90,8 +90,9 @@ def test_tight_bbox_crop_excludes_adjacent_glove_without_changing_output_contrac
 
     assert crop.shape == (20, 20, 3)
 
-    # Selected glove is preserved.
-    assert np.all(crop == 200)
+    # Selected glove is preserved in the letterboxed content band.
+    assert np.all(crop[5:15] == 200)
+    assert np.all(crop[0, 0] == config.event.letterbox_fill)
 
     # Adjacent glove must not appear.
     assert not np.any(crop == 100)

@@ -1,0 +1,146 @@
+<section id="factory" class="page-section">
+  <div class="section-heading">
+    <div><p class="eyebrow">Production</p><h1>GRIP factory inspection</h1></div>
+    <p class="lede">Same Layer-1 detector, passage processor, and canonical crop as offline extraction. Layer 2 runs once per accepted passage.</p>
+  </div>
+  <p class="notice info">Use SHADOW mode to validate LEFT and RIGHT gloves under the same current lighting before enabling ARMED mode. High validation accuracy does not by itself prove lighting independence.</p>
+
+  <article class="panel host-only">
+    <div class="factory-controls">
+      <label class="field"><span>Camera</span>
+        <select id="factory-camera"><option value="">Scan or choose a camera</option></select>
+        <small class="field-help">Host camera used for live inspection. Scan detects available OpenCV camera indices and reports backend, resolution and FPS.</small>
+      </label>
+      <div class="form-actions"><button id="factory-scan" class="button" type="button">Scan Cameras</button></div>
+      <label class="field" id="factory-custom-source-wrap" hidden><span>Custom OpenCV source</span>
+        <input id="factory-custom-source" placeholder="rtsp:// or video path">
+      </label>
+
+      <label class="field"><span>Layer-2 model</span>
+        <span class="input-row"><input id="factory-models-root" placeholder="runs/layer2_classifier"><button id="factory-models-save" class="button" type="button">Use folder</button></span>
+        <small class="field-help">Classifier used once per accepted glove passage to decide LEFT or RIGHT.</small>
+      </label>
+      <label class="field"><span>Checkpoint</span>
+        <select id="factory-checkpoint"><option value="">Choose a checkpoint</option></select>
+        <small class="field-help">Saved Layer-2 PyTorch weights. The selected model must match the checkpoint architecture.</small>
+      </label>
+      <label class="field" id="factory-custom-checkpoint-wrap" hidden><span>Custom checkpoint path</span><input id="factory-custom-checkpoint"></label>
+      <p id="factory-checkpoint-meta" class="field-help"></p>
+      <button id="factory-sha256" class="button" type="button">Show SHA256</button>
+
+      <label class="field"><span>Extraction configuration</span>
+        <select id="factory-config"><option value="">Choose a YAML file</option></select>
+        <small class="field-help">Controls Layer-1 detection, ROI, trigger zone, timing and the exact crop sent to Layer-2. Changing this changes what enters the classifier.</small>
+      </label>
+      <label class="field" id="factory-custom-config-wrap" hidden><span>Custom config path</span><input id="factory-custom-config"></label>
+      <p id="factory-config-path" class="field-help"></p>
+      <p id="factory-config-warning" class="field-help warn" hidden></p>
+
+      <label class="field"><span>Device</span>
+        <select id="factory-device"><option>auto</option><option>cuda</option><option>cuda:0</option><option>cpu</option></select>
+        <small class="field-help">CUDA runs inference on the NVIDIA GPU. CPU is slower but can be used for debugging. Auto selects CUDA when available.</small>
+      </label>
+      <p id="factory-cuda-status" class="field-help">Checking CUDA…</p>
+      <label class="check-field"><input id="factory-amp" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>CUDA AMP</strong><small class="field-help">Uses mixed precision on a compatible NVIDIA GPU to reduce classifier latency and GPU load.</small></span></label>
+
+      <label class="field"><span>Operating mode</span>
+        <select id="factory-mode"><option value="preview">PREVIEW</option><option value="shadow" selected>SHADOW</option><option value="armed">ARMED</option></select>
+        <small class="field-help">PREVIEW visualizes detection only. SHADOW classifies and logs without moving the actuator. ARMED permits physical reject commands.</small>
+      </label>
+      <label class="field"><span>Reject class</span>
+        <select id="factory-reject-class"><option value="right" selected>right</option><option value="left">left</option></select>
+        <small class="field-help">The class that should activate the reject mechanism. For the current GRIP lane, RIGHT is the reject class.</small>
+        <p id="factory-reject-warning" class="field-help warn" hidden>Changing the reject class away from RIGHT is not the current GRIP lane rule.</p>
+      </label>
+      <label class="field"><span>Decision class</span>
+        <select id="factory-decision-class"><option>argmax</option><option>right</option><option>left</option></select>
+        <small class="field-help">Argmax selects whichever class has the larger probability. A recall-priority class and threshold can bias decisions toward that class.</small>
+      </label>
+      <label class="field"><span>Decision threshold</span>
+        <input id="factory-decision-threshold" type="number" value="0.5" min="0" max="1" step="0.01">
+        <small class="field-help">Only relevant when using a recall-priority class. Lowering the RIGHT threshold can reduce missed right gloves but increases false rejects.</small>
+      </label>
+      <label class="field"><span>Belt direction</span>
+        <select id="factory-belt-direction"><option>left_to_right</option><option>right_to_left</option><option>top_to_bottom</option><option>bottom_to_top</option></select>
+        <small class="field-help">Direction the glove moves through the trigger zone. Used to determine trigger line crossing.</small>
+      </label>
+      <label class="check-field"><input id="factory-trigger-enabled" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>Trigger line</strong><small class="field-help">Virtual line used to timestamp when the glove passes a known conveyor position.</small></span></label>
+      <label class="field"><span>Trigger line fraction</span><input id="factory-trigger-fraction" type="number" value="0.5" min="0" max="1" step="0.01"></label>
+
+      <label class="field"><span>Serial port</span>
+        <span class="input-row"><select id="factory-serial-port"><option value="">Refresh ports</option></select><button id="factory-refresh-ports" class="button" type="button">Refresh ports</button></span>
+        <small class="field-help">USB/serial connection to the STM32/Arduino/ESP actuator controller.</small>
+      </label>
+      <label class="field"><span>Baud rate</span>
+        <input id="factory-baud" type="number" value="115200" min="1">
+        <small class="field-help">Serial communication speed. The PC and microcontroller must use the same value.</small>
+      </label>
+      <label class="field"><span>Actuator delay (ms)</span>
+        <input id="factory-delay" type="number" value="850" min="0">
+        <small class="field-help">Delay value sent with the reject command. It is calibrated from the inspection location to the physical reject mechanism.</small>
+      </label>
+      <p id="factory-serial-status" class="field-help">Serial disconnected</p>
+      <div class="form-actions">
+        <button id="factory-connect" class="button" type="button">Connect</button>
+        <button id="factory-disconnect" class="button" type="button">Disconnect</button>
+      </div>
+      <label class="check-field"><input id="factory-audio" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>Audio alert on reject</strong><small class="field-help">Plays one browser alert when a reject-class glove is accepted and classified.</small></span></label>
+      <label class="check-field"><input id="factory-continue-counters" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>Continue counters</strong><small class="field-help">Leave session counters unchanged. Otherwise a new session starts from zero.</small></span></label>
+      <div class="form-actions">
+        <button id="factory-start" class="button primary" type="button">Start</button>
+        <button id="factory-stop" class="button danger" type="button">Stop</button>
+        <button id="factory-reset-counters" class="button" type="button">Reset counters</button>
+        <a id="factory-export-jsonl" class="button" href="/api/factory/export?format=jsonl">Export JSONL</a>
+        <a id="factory-export-csv" class="button" href="/api/factory/export?format=csv">Export CSV</a>
+      </div>
+    </div>
+  </article>
+
+  <p id="factory-stage" class="factory-stage">Idle</p>
+  <div class="factory-layout">
+    <article class="panel">
+      <div class="panel-heading"><div><h2>Live camera</h2><p>Layer-1 boxes come from the same PassageProcessor frame. Layer 2 is not run per frame.</p></div></div>
+      <img id="factory-preview" class="factory-preview" alt="Live inspection preview">
+      <p id="factory-position" class="field-help">Position: waiting for a detection</p>
+    </article>
+    <article id="factory-latest" class="panel status-idle">
+      <p class="eyebrow">Latest result</p>
+      <h2 class="factory-alert">Idle</h2>
+      <p>No passage yet.</p>
+      <img id="factory-crop" class="factory-crop" alt="Canonical Layer-2 crop" hidden>
+    </article>
+  </div>
+
+  <div class="metric-grid">
+    <article class="metric-card"><span>Accepted</span><strong id="count-accepted">0</strong></article>
+    <article class="metric-card"><span>LEFT / PASS</span><strong id="count-left">0</strong></article>
+    <article class="metric-card"><span>RIGHT / REJECT</span><strong id="count-right">0</strong></article>
+    <article class="metric-card"><span>Pipeline rejected</span><strong id="count-pipeline">0</strong></article>
+    <article class="metric-card"><span>Multiple</span><strong id="count-multiple">0</strong></article>
+    <article class="metric-card"><span>Partial</span><strong id="count-partial">0</strong></article>
+    <article class="metric-card"><span>Commands sent</span><strong id="count-commands">0</strong></article>
+    <article class="metric-card"><span>Capture FPS</span><strong id="metric-capture-fps">—</strong></article>
+    <article class="metric-card"><span>Processed FPS</span><strong id="metric-processed-fps">—</strong></article>
+    <article class="metric-card"><span>YOLO ms</span><strong id="metric-yolo">—</strong></article>
+    <article class="metric-card"><span>Classifier ms</span><strong id="metric-classifier">—</strong></article>
+    <article class="metric-card"><span>Event ms</span><strong id="metric-event">—</strong></article>
+    <article class="metric-card"><span>Accepted latency ms</span><strong id="metric-accepted-latency">—</strong></article>
+    <article class="metric-card"><span>Dropped frames</span><strong id="metric-dropped">—</strong></article>
+  </div>
+
+  <article class="panel">
+    <div class="panel-heading"><div><h2>Recent passages</h2></div></div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Time</th><th>Event ID</th><th>Status</th><th>Prediction</th><th>Confidence</th><th>Detector</th><th>Position</th><th>Trigger crossing</th><th>Result</th><th>Actuator</th></tr></thead>
+      <tbody id="factory-events"><tr><td colspan="10" class="empty">No passages yet.</td></tr></tbody>
+    </table></div>
+  </article>
+
+  <dialog id="arm-dialog">
+    <form method="dialog" class="arm-card">
+      <h2>Enable ARMED mode?</h2>
+      <p>ARMED mode can activate physical machinery. Confirm shadow testing is complete and the actuator area is clear.</p>
+      <div class="form-actions"><button id="arm-cancel" class="button" value="cancel">Cancel</button><button id="arm-confirm" class="button danger" value="confirm">Enable ARMED</button></div>
+    </form>
+  </dialog>
+</section>

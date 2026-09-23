@@ -37,6 +37,11 @@ class PassageOutcome:
     crop: np.ndarray | None = None
     full_frame: np.ndarray | None = None
     passage_started_s: float | None = None
+    trigger_crossing_s: float | None = None
+    trigger_crossing_position_px: tuple[float, float] | None = None
+    trigger_crossing_position_norm: tuple[float, float] | None = None
+    center_px: tuple[float, float] | None = None
+    center_norm: tuple[float, float] | None = None
 
     @property
     def accepted(self) -> bool:
@@ -165,7 +170,7 @@ def _crop_bounds(
     )
 
 
-def _letterbox(image: np.ndarray, size: int) -> np.ndarray:
+def _letterbox(image: np.ndarray, size: int, fill_value: int = 114) -> np.ndarray:
     """Resize without aspect distortion and center on a fixed square canvas."""
     height, width = image.shape[:2]
     if height == 0 or width == 0:
@@ -175,9 +180,8 @@ def _letterbox(image: np.ndarray, size: int) -> np.ndarray:
     resized_height = max(1, round(height * scale))
     interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
     resized = cv2.resize(image, (resized_width, resized_height), interpolation=interpolation)
-    fill = np.median(image.reshape(-1, image.shape[2]), axis=0).astype(image.dtype)
     canvas = np.empty((size, size, image.shape[2]), dtype=image.dtype)
-    canvas[:] = fill
+    canvas[:] = fill_value
     x1 = (size - resized_width) // 2
     y1 = (size - resized_height) // 2
     canvas[y1:y1 + resized_height, x1:x1 + resized_width] = resized
@@ -206,7 +210,7 @@ def create_event_crop(
             background = crop[outside]
             source = background if background.size else crop.reshape(-1, crop.shape[2])
             crop[outside] = np.median(source, axis=0).astype(crop.dtype)
-    return _letterbox(crop, event.output_size)
+    return _letterbox(crop, event.output_size, event.letterbox_fill)
 
 
 def _canonical_detection_key(detection: Detection) -> tuple[float, ...]:
@@ -218,6 +222,62 @@ def _canonical_detection_key(detection: Detection) -> tuple[float, ...]:
         detection.x2,
         detection.y2,
         -1 if detection.class_id is None else detection.class_id,
+    )
+
+
+def directional_crossing_alpha(
+    previous: float,
+    current: float,
+    line: float,
+    increasing: bool,
+) -> float | None:
+    """Interpolation alpha for one directional line crossing, or None if it did not happen."""
+    if increasing:
+        crossed = previous < line <= current
+    else:
+        crossed = previous > line >= current
+    if not crossed or current == previous:
+        return None
+    alpha = (line - previous) / (current - previous)
+    return float(min(1.0, max(0.0, alpha)))
+
+
+def trigger_line_axis(direction: str) -> str:
+    """Motion axis for a belt direction. The trigger line is perpendicular to it."""
+    if direction in {"left_to_right", "right_to_left"}:
+        return "x"
+    if direction in {"top_to_bottom", "bottom_to_top"}:
+        return "y"
+    raise ValueError(
+        "belt_direction must be left_to_right, right_to_left, "
+        "top_to_bottom, or bottom_to_top"
+    )
+
+
+def trigger_line_position(
+    config: ExtractionConfig,
+    width: int,
+    height: int,
+) -> tuple[str, float]:
+    """Return the trigger-line axis and its pixel position inside the trigger zone."""
+    axis = trigger_line_axis(config.event.belt_direction)
+    tx1, ty1, tx2, ty2 = config.detector.trigger_zone
+    fraction = config.event.trigger_line_fraction
+    if axis == "x":
+        position = (tx1 + fraction * (tx2 - tx1)) * width
+    else:
+        position = (ty1 + fraction * (ty2 - ty1)) * height
+    return axis, float(position)
+
+
+def _direction_increasing(direction: str) -> bool:
+    if direction in {"left_to_right", "top_to_bottom"}:
+        return True
+    if direction in {"right_to_left", "bottom_to_top"}:
+        return False
+    raise ValueError(
+        "belt_direction must be left_to_right, right_to_left, "
+        "top_to_bottom, or bottom_to_top"
     )
 
 
@@ -259,6 +319,12 @@ class PassageProcessor:
         self.pending_partial: tuple[int, float, Detection, int] | None = None
         self.ambiguity_latched = False
         self.sequence = 0
+        self._previous_center: tuple[float, float, float] | None = None
+        self._trigger_crossing_s: float | None = None
+        self._trigger_crossing_position_px: tuple[float, float] | None = None
+        self._trigger_crossing_position_norm: tuple[float, float] | None = None
+        self._frame_width = 0
+        self._frame_height = 0
 
     def _event_id(self) -> str:
         self.sequence += 1
@@ -272,12 +338,65 @@ class PassageProcessor:
         self.missing_since_s = None
         self.best = None
         self.last_detection = None
+        self._previous_center = None
+        self._trigger_crossing_s = None
+        self._trigger_crossing_position_px = None
+        self._trigger_crossing_position_norm = None
         if cooldown:
             self.rearming = True
             self.cooldown = self.config.event.cooldown_frames
             self.cooldown_until_s = timestamp_s + self.config.event.cooldown_seconds
         else:
             self.rearming = False
+
+    def _apply_geometry(self, outcome: PassageOutcome) -> PassageOutcome:
+        outcome.trigger_crossing_s = self._trigger_crossing_s
+        position = self._trigger_crossing_position_px
+        normalized = self._trigger_crossing_position_norm
+        outcome.trigger_crossing_position_px = None if position is None else tuple(position)
+        outcome.trigger_crossing_position_norm = None if normalized is None else tuple(normalized)
+        detection = outcome.detection
+        if detection is None:
+            return outcome
+        cx, cy = detection.center
+        outcome.center_px = (float(cx), float(cy))
+        width, height = self._frame_width, self._frame_height
+        if width > 0 and height > 0:
+            outcome.center_norm = (float(cx) / width, float(cy) / height)
+        return outcome
+
+    def _note_trigger_crossing(
+        self,
+        previous: tuple[float, float, float],
+        current_x: float,
+        current_y: float,
+        timestamp_s: float,
+        width: int,
+        height: int,
+    ) -> None:
+        event = self.config.event
+        if not event.trigger_line_enabled or self._trigger_crossing_s is not None:
+            return
+        if width <= 0 or height <= 0:
+            return
+        axis, line = trigger_line_position(self.config, width, height)
+        increasing = _direction_increasing(event.belt_direction)
+        prev_x, prev_y, prev_t = previous
+        if axis == "x":
+            alpha = directional_crossing_alpha(prev_x, current_x, line, increasing)
+            if alpha is None:
+                return
+            cross_x = line
+            cross_y = prev_y + alpha * (current_y - prev_y)
+        else:
+            alpha = directional_crossing_alpha(prev_y, current_y, line, increasing)
+            if alpha is None:
+                return
+            cross_x = prev_x + alpha * (current_x - prev_x)
+            cross_y = line
+        self._trigger_crossing_s = prev_t + alpha * (timestamp_s - prev_t)
+        self._trigger_crossing_position_px = (float(cross_x), float(cross_y))
+        self._trigger_crossing_position_norm = (float(cross_x) / width, float(cross_y) / height)
 
     def _record(
         self,
@@ -287,7 +406,7 @@ class PassageProcessor:
         candidate_count: int,
         detection: Detection | None,
     ) -> PassageOutcome:
-        return PassageOutcome(
+        outcome = PassageOutcome(
             self._event_id(),
             self.source_video,
             self.label,
@@ -298,6 +417,7 @@ class PassageProcessor:
             candidate_count,
             detection,
         )
+        return self._apply_geometry(outcome)
 
     def _confirmed(self, timestamp_s: float) -> bool:
         if self.config.event.timing_mode == "time":
@@ -355,6 +475,7 @@ class PassageProcessor:
                 best.frame,
                 self.first_seen_s,
             )
+        outcome = self._apply_geometry(outcome)
         self._reset(timestamp_s, cooldown=True)
         return outcome
 
@@ -427,6 +548,8 @@ class PassageProcessor:
         detector_latency = (time.perf_counter() - detect_start) * 1000.0
         event_start = time.perf_counter()
         height, width = frame.shape[:2]
+        self._frame_width = int(width)
+        self._frame_height = int(height)
         outcomes: list[PassageOutcome] = []
 
         eligible = [
@@ -511,6 +634,17 @@ class PassageProcessor:
                     self.missing = 0
                     self.missing_since_s = None
                     score, sharpness = _quality(frame, chosen, self.config, previous)
+                    cx, cy = chosen.center
+                    if self._previous_center is not None:
+                        self._note_trigger_crossing(
+                            self._previous_center,
+                            float(cx),
+                            float(cy),
+                            float(timestamp_s),
+                            width,
+                            height,
+                        )
+                    self._previous_center = (float(cx), float(cy), float(timestamp_s))
                     self.last_detection = chosen
                     if self._confirmed(timestamp_s):
                         self.active = True

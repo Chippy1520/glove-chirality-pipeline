@@ -36,7 +36,8 @@ Expected data inventory, not stored here:
 - Segmentation preview overlays masks, tight boxes, confidence, candidate count, partial/edge diagnostics, and ambiguity.
 - Real-time detector calibration reuses `ExtractionConfig`/`YoloDetector`, displays size-rejected candidates diagnostically, and saves versioned screenshots.
 - Integer camera sources use verified-frame Windows backend fallback (DirectShow, MSMF, then default) and report the successful stream geometry.
-- Bounded-queue `infer-live` with stale-frame dropping, one classifier call per accepted passage, JSONL output, model warm-up, and rolling runtime metrics.
+- Canonical crops letterbox to the configured output size with neutral padding (`letterbox_fill`, default 114), not the crop median. Offline extraction, video inference, live inference, and Factory Live share `create_event_crop()`.
+- Factory Live browser page: camera scan, checkpoint and config dropdowns, PREVIEW/SHADOW/ARMED, optional trigger-line crossing time, wall-clock timestamps, and an optional serial reject command. Startup is non-actuating. See `docs/GUI.md`.
 - Model factory: TinyCNN, ResNet-18, MobileNetV3-Small, ViT-B/16, Swin-T, ConvNeXt V2 Pico, and DINOv3 ConvNeXt-Tiny. See `docs/CLASSIFIER_MODEL_OPTIONS.md` for roles and pretrained-weight licenses.
 - Source-video-grouped validation split, selectable loss, and `none`/`standard`/`anti_spurious` chirality-safe augmentation.
 - Optional TensorBoard logging plus architecture-neutral SmoothGrad and occlusion sensitivity overlays for individual classifier decisions.

@@ -94,6 +94,7 @@ class EventConfig:
     crop_padding: float = 0.12
     make_square: bool = True
     output_size: int = 256
+    letterbox_fill: int = 114
     crop_mode: str = "bbox"
     save_masks: bool = False
     min_sharpness: float = 0.0
@@ -108,6 +109,9 @@ class EventConfig:
     quality_mask_stability_weight: float = 0.0
     quality_boundary_clearance_weight: float = 0.0
     quality_edge_penalty_weight: float = 0.0
+    trigger_line_enabled: bool = False
+    belt_direction: str = "left_to_right"
+    trigger_line_fraction: float = 0.5
 
     def __post_init__(self):
         self.validate()
@@ -121,6 +125,10 @@ class EventConfig:
             raise ValueError("track distance and crop padding must be non-negative")
         if self.output_size <= 0:
             raise ValueError("output_size must be positive")
+        if isinstance(self.letterbox_fill, bool) or not isinstance(self.letterbox_fill, int):
+            raise ValueError("letterbox_fill must be an integer")  # noqa: TRY004
+        if not 0 <= self.letterbox_fill <= 255:
+            raise ValueError("letterbox_fill must be in [0, 255]")
         if self.crop_mode not in {"bbox", "masked", "masked_fill"}:
             raise ValueError("crop_mode must be bbox, masked, or masked_fill")
         if self.timing_mode not in {"frames", "time"}:
@@ -139,6 +147,17 @@ class EventConfig:
         )
         if any(weight < 0 for weight in weights):
             raise ValueError("association and quality weights must be non-negative")
+        if self.belt_direction not in {
+            "left_to_right",
+            "right_to_left",
+            "top_to_bottom",
+            "bottom_to_top",
+        }:
+            raise ValueError(
+                "belt_direction must be left_to_right, right_to_left, top_to_bottom, or bottom_to_top"
+            )
+        if not 0.0 <= self.trigger_line_fraction <= 1.0:
+            raise ValueError("trigger_line_fraction must be in [0.0, 1.0]")
 
 
 @dataclass

@@ -20,6 +20,8 @@ from flask import Flask, Response, abort, jsonify, render_template, request
 
 from glove_chirality.comparison import COMPARISON_METRICS
 from glove_chirality.config import ExtractionConfig
+from glove_chirality.factory_live import FactoryLiveSession
+from glove_chirality.factory_routes import register_factory_routes, register_factory_viewer
 from glove_chirality.models import CLASSIFIER_CHOICES
 from glove_chirality.ui_presets import (
     custom_yolo_segmentation_preset,
@@ -87,6 +89,7 @@ def create_app(
     *,
     lan_enabled: bool = False,
     lan_viewer_url: str | None = None,
+    factory_session: FactoryLiveSession | None = None,
 ) -> Flask:
     """Create the loopback-only host controller application."""
     app = Flask(
@@ -98,6 +101,7 @@ def create_app(
         COMMAND_SERVICE=service,
         LAN_ENABLED=lan_enabled,
         LAN_VIEWER_URL=lan_viewer_url,
+        FACTORY=factory_session or FactoryLiveSession(service.workdir),
     )
 
     def local_request() -> bool:
@@ -271,10 +275,16 @@ def create_app(
         path = service.set_comparison_root(str(payload.get("path", "")))
         return jsonify(path=str(path))
 
+    register_factory_routes(app, app.config["FACTORY"], host_only)
     return app
 
 
-def create_viewer_app(service: CommandService, *, lan_token: str) -> Flask:
+def create_viewer_app(
+    service: CommandService,
+    *,
+    lan_token: str,
+    factory_session: FactoryLiveSession | None = None,
+) -> Flask:
     """Create an authenticated LAN observer with no mutation routes."""
     if not lan_token:
         raise ValueError("LAN viewer requires a non-empty access token")
@@ -337,6 +347,7 @@ def create_viewer_app(service: CommandService, *, lan_token: str) -> Flask:
         metric = request.args.get("metric", "recall_right")
         return jsonify(metric=metric, runs=service.comparison(metric, reveal_paths=False))
 
+    register_factory_viewer(app, factory_session or FactoryLiveSession(service.workdir))
     return app
 
 
@@ -377,6 +388,7 @@ def main(argv: list[str] | None = None) -> None:
 
     token = args.token or (secrets.token_urlsafe(18) if args.lan else "")
     service = CommandService(args.workdir)
+    factory = FactoryLiveSession(args.workdir)
     lan_address = ""
     lan_viewer_url = None
     if args.lan and not args.smoke_test:
@@ -389,8 +401,11 @@ def main(argv: list[str] | None = None) -> None:
         service,
         lan_enabled=args.lan,
         lan_viewer_url=lan_viewer_url,
+        factory_session=factory,
     )
-    viewer_app = create_viewer_app(service, lan_token=token) if args.lan else None
+    viewer_app = (
+        create_viewer_app(service, lan_token=token, factory_session=factory) if args.lan else None
+    )
     if args.smoke_test:
         client = app.test_client()
         response = client.get("/api/health")
@@ -433,6 +448,7 @@ def main(argv: list[str] | None = None) -> None:
         if viewer_thread is not None:
             viewer_thread.join(timeout=2.0)
         service.shutdown()
+        factory.stop()
 
 
 if __name__ == "__main__":

@@ -204,3 +204,75 @@ The GUI does not hide errors or fabricate success. The final subprocess exit cod
 6. Use full-video inference only with a validated extractor configuration and checkpoint.
 
 Raw videos, crops, model checkpoints, and outputs remain excluded from Git.
+
+## Factory Live
+
+Factory Live is an additional production page. It does not replace Extract, Layer 1, Train, Infer, Explain, Compare, or Run log, and it does not implement a second detector or crop path.
+
+Launch the workstation, then open **Factory Live**:
+
+```bash
+glove-pipeline-gui
+```
+
+Optional serial support:
+
+```bash
+python -m pip install -e ".[factory]"
+```
+
+The page is normal document flow and scrolls on a laptop. Host controls stay loopback-only. A LAN viewer can see sanitized status only; it has no camera frames, serial, ARMED, start, stop, or config routes.
+
+### What the operator selects
+
+- **Scan Cameras** uses the existing Windows backend fallback and releases each test capture immediately. A custom OpenCV source remains available for streams or files.
+- Checkpoints are discovered under a remembered models root (`outputs/factory_settings.json`, gitignored) or `GRIP_DATA_ROOT/runs/layer2_classifier`. No machine-specific dataset path is committed.
+- Extraction YAML files under `configs/` are listed. `configs/factory.yaml` is a portable template: relative YOLO placeholder, required masks, letterbox fill 114, and the current GRIP ROI/trigger/timing values. Replace the YOLO checkpoint on the Layer 1 page before production use.
+- Device choices are `auto`, `cuda`, `cuda:0`, and `cpu`. The page reports whether CUDA is actually available and which device PyTorch selected. It does not claim CUDA is active if CPU was selected.
+- **RIGHT** is the default reject class. Changing it shows a warning.
+
+### Modes
+
+| Mode | Behavior |
+|---|---|
+| PREVIEW | Camera and Layer-1 overlay only. No classifier call and no actuator command. |
+| SHADOW | Full Layer-1 plus one Layer-2 decision per accepted passage. Logs `would reject`. Never sends a serial command. This is the startup default. |
+| ARMED | Same pipeline, and an accepted reject-class passage can send one command. Requires an explicit warning confirmation and a connected serial port. |
+
+ARMED is never restored after reload, restart, camera failure, model failure, serial disconnect, or an inference exception. Those faults return to SHADOW or stop the session.
+
+### Overlay and timing
+
+The preview is the latest annotated JPEG, polled at about 12 FPS. Stale camera frames continue to be dropped. The overlay draws the ROI, trigger zone, optional trigger line, boxes, segmentation outlines, confidence, center, and ELIGIBLE/PARTIAL/MULTIPLE. It uses detections already produced by `PassageProcessor.process()` and does not run YOLO again.
+
+A trigger-line crossing is measured only when `trigger_line_enabled` is true, only in the configured belt direction, and only by interpolating the tracked center. If no crossing was observed, the timestamp stays null. Wall-clock ISO timestamps are derived from the session start; elapsed time still uses a monotonic clock.
+
+The displayed 256×256 crop is the canonical `PassageOutcome.crop`. Pipeline rejects show the reason and **Classifier not run**. They are not labeled LEFT or RIGHT and they do not send a reject command.
+
+### Actuator
+
+Protocol, one line per command:
+
+```text
+REJECT|<event_id>|<delay_ms>
+ACK|<event_id>
+```
+
+One accepted passage sends at most one command, and only when mode is ARMED, status is accepted, and the prediction equals the reject class. Serial I/O runs on a worker thread. Disconnect disarms. Software is not a hardware interlock.
+
+Each session writes `outputs/factory_live/<timestamp>/session.json`, `events.jsonl`, and `actuator.jsonl`.
+
+### Recommended startup
+
+1. Connect the camera and scan it.
+2. Select the validated extraction config.
+3. Select the Layer-2 checkpoint.
+4. Select CUDA and AMP if PyTorch reports a GPU.
+5. Run SHADOW.
+6. Pass known LEFT gloves.
+7. Pass known RIGHT gloves under the same lighting.
+8. Check counts, confidence, and trigger timestamps.
+9. Connect the serial controller and verify ACK.
+10. Only then confirm ARMED.
+
+Anti-spurious augmentation remains a training experiment. It varies brightness, contrast, saturation, grayscale, blur, rotation, and small erasing. It never reflects images horizontally, and validation images stay unaugmented.

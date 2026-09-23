@@ -6,7 +6,9 @@
   <meta name="theme-color" content="#101828">
   <title>GRIP · Glove chirality workstation</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='factory.css') }}">
   <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='factory.js') }}"></script>
 </head>
 <body data-local="{{ 'true' if initial_can_edit else 'false' }}">
   <a class="skip-link" href="#overview">Skip to workspace</a>
@@ -25,6 +27,7 @@
   <div class="shell">
     <nav class="sidebar" aria-label="Workspace sections">
       <a class="nav-link active" href="#overview" aria-current="page"><span>01</span>Overview</a>
+      <a class="nav-link" href="#factory"><span>FL</span>Factory Live</a>
       <a class="nav-link host-only" href="#extract"><span>02</span>Extract</a>
       <a class="nav-link host-only" href="#layer-one"><span>03</span>Layer 1</a>
       <a class="nav-link host-only" href="#train"><span>04</span>Train</a>
@@ -73,6 +76,8 @@
           </form>
         </article>
       </section>
+
+      {% include "factory.html" %}
 
       <section id="extract" class="page-section host-only">
         <div class="section-heading"><div><p class="eyebrow">Workflow 01</p><h1>Extract representative crops</h1></div><p class="lede">Use the same passage extractor and YAML for dataset creation and deployment.</p></div>
@@ -154,11 +159,13 @@
             <label class="check-field"><input name="amp" type="checkbox"><span class="tick" aria-hidden="true"></span><span><strong>CUDA AMP</strong><small>Use mixed precision on a compatible GPU</small></span></label>
             <div class="form-actions"><button class="button primary" type="submit">Start training</button><button class="button danger" type="button" data-stop="pipeline">Stop pipeline</button></div>
           </form>
+          <p class="field-help">Anti-spurious augmentation intentionally varies appearance and lighting so the classifier is encouraged to rely more on glove geometry/chirality rather than session-specific color or illumination. It does not horizontally reflect images. It is an experiment to compare with standard augmentation, not a guaranteed improvement. Validation images stay unaugmented.</p>
         </article>
       </section>
 
       <section id="infer" class="page-section host-only">
         <div class="section-heading"><div><p class="eyebrow">Workflow 04</p><h1>Inference</h1></div><p class="lede">Run accepted crops, complete videos, or a live source through the same Layer 2 checkpoint.</p></div>
+        <p class="field-help">Source: camera index, video, or OpenCV-compatible stream. The research live page does not arm an actuator. Checkpoint: saved Layer-2 weights; the selected architecture must match. Config: Layer-1 detection, ROI, trigger zone, timing, and the exact crop sent to Layer-2. Device: CUDA uses the NVIDIA GPU; CPU is for debugging; Auto selects CUDA when available. CUDA AMP: mixed precision on a compatible GPU. Recall-priority class: argmax picks the larger probability; a priority class and threshold can bias toward that class. Decision threshold: only used with a recall-priority class. Lowering the RIGHT threshold can reduce missed right gloves but increases false rejects.</p>
         <div class="two-column">
           <article class="panel"><div class="panel-heading"><div><h2>Video</h2></div></div><form class="action-form form-grid one" data-action="infer_video">
             <label class="field"><span>Video</span><input name="video" required></label><label class="field"><span>Checkpoint</span><input name="checkpoint" required></label><label class="field"><span>Output CSV</span><input name="output" value="outputs/predictions.csv" required></label><label class="field"><span>Extraction config</span><input name="config" value="configs/default.yaml" required></label><label class="field"><span>Device</span><input name="device" value="auto"></label><label class="field"><span>Recall-priority class</span><select name="decision_class"><option>argmax</option><option>right</option><option>left</option></select></label><label class="field"><span>Decision threshold</span><input name="decision_threshold" type="number" value="0.5" min="0" max="1" step="0.01"></label><div class="form-actions"><button class="button primary" type="submit">Run video</button></div>

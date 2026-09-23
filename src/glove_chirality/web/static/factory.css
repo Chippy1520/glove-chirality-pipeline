@@ -1,0 +1,30 @@
+.field-help { display: block; margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; font-weight: 500; }
+.field-help.warn { color: var(--warning); }
+.factory-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+.factory-controls .form-actions, .factory-controls .check-field { grid-column: 1 / -1; }
+.factory-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr); gap: 16px; margin: 16px 0; }
+.factory-preview, .factory-crop { width: 100%; height: auto; background: #101828; border-radius: 10px; }
+.factory-crop { width: 256px; max-width: 100%; background: #eceff3; }
+.factory-stage { margin: 12px 0; font-weight: 700; }
+.status-pass { background: #e8f7f0; color: #087a55; }
+.status-reject { background: #fdecea; color: #b42318; }
+.status-pipeline { background: #fff6e8; color: #a15c07; }
+.status-idle { background: #f2f4f7; color: #667085; }
+.factory-alert { margin: 4px 0 8px; font-size: 28px; line-height: 1.1; }
+#arm-dialog { border: 0; border-radius: 14px; padding: 0; max-width: 460px; }
+#arm-dialog::backdrop { background: rgb(16 24 40 / 55%); }
+.arm-card { padding: 22px; }
+#factory { overflow: visible; height: auto; }
+
+@media (max-width: 900px) {
+  .factory-controls, .factory-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .sidebar {
+    display: flex;
+    overflow-x: auto;
+    grid-template-columns: none;
+  }
+  .nav-link { flex: 0 0 auto; white-space: nowrap; }
+}

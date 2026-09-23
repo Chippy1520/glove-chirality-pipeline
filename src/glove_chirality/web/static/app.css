@@ -209,11 +209,11 @@ body[data-local="false"] .host-only { display: none !important; }
   .shell { display: block; padding-top: 64px; }
   .sidebar {
     position: fixed; top: auto; bottom: 0; left: 0; right: 0; width: auto; height: auto;
-    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px;
-    padding: 6px 8px; overflow: hidden;
+    display: flex; overflow-x: auto; gap: 3px;
+    padding: 6px 8px;
     border: 0; border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgb(16 24 40 / 8%);
   }
-  .nav-link { justify-content: center; min-width: 0; min-height: 44px; margin: 0; padding: 7px 4px; font-size: 11px; white-space: nowrap; }
+  .nav-link { flex: 0 0 auto; justify-content: center; min-width: 0; min-height: 44px; margin: 0; padding: 7px 10px; font-size: 11px; white-space: nowrap; }
   .nav-link span { display: none; }
   main { padding: 18px 14px 124px; }
   .page-section { margin-bottom: 42px; scroll-margin-top: 76px; }

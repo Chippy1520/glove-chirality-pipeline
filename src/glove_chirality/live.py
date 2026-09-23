@@ -8,6 +8,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
@@ -17,7 +18,7 @@ import numpy as np
 from glove_chirality.camera import open_camera
 from glove_chirality.config import ExtractionConfig
 from glove_chirality.detection import build_detector
-from glove_chirality.events import PassageOutcome, PassageProcessor
+from glove_chirality.events import FrameResult, PassageOutcome, PassageProcessor
 from glove_chirality.inference import TorchClassifier
 
 
@@ -154,30 +155,86 @@ def parse_capture_source(source: str | int) -> int | str:
     return int(stripped) if stripped.isdigit() else stripped
 
 
+def _wall_iso(relative_s: float | None, wall_start: datetime) -> str | None:
+    if relative_s is None:
+        return None
+    return (wall_start + timedelta(seconds=float(relative_s))).isoformat(timespec="milliseconds")
+
+
+def _pair(value) -> list[float] | None:
+    if not value:
+        return None
+    return [float(value[0]), float(value[1])]
+
+
 def _event_payload(
     outcome: PassageOutcome,
     prediction: str | None = None,
     confidence: float | None = None,
+    *,
+    wall_start: datetime | None = None,
+    session_id: str | None = None,
+    checkpoint: str | None = None,
+    model_name: str | None = None,
+    config_path: str | None = None,
+    classifier_ms: float | None = None,
 ) -> dict[str, object]:
     detection = outcome.detection
+    timestamp_s = round(float(outcome.timestamp_s), 6)
+    passage_started = getattr(outcome, "passage_started_s", None)
+    crossing_s = getattr(outcome, "trigger_crossing_s", None)
     payload: dict[str, object] = {
         "event_id": outcome.event_id,
-        "timestamp": round(outcome.timestamp_s, 6),
+        "timestamp": timestamp_s,
+        "timestamp_s": timestamp_s,
+        "wall_time_iso": _wall_iso(outcome.timestamp_s, wall_start) if wall_start else None,
+        "passage_started_s": passage_started,
+        "passage_started_wall_time_iso": _wall_iso(passage_started, wall_start) if wall_start else None,
+        "trigger_crossing_s": crossing_s,
+        "trigger_crossing_wall_time_iso": _wall_iso(crossing_s, wall_start) if wall_start else None,
+        "trigger_crossing_position_px": _pair(getattr(outcome, "trigger_crossing_position_px", None)),
+        "trigger_crossing_position_norm": _pair(
+            getattr(outcome, "trigger_crossing_position_norm", None)
+        ),
         "prediction": prediction,
-        "confidence": confidence,
+        "confidence": None if prediction is None else confidence,
         "detector_confidence": detection.confidence if detection else None,
         "bbox": (
-            [detection.x1, detection.y1, detection.x2, detection.y2]
-            if detection
-            else None
+            [detection.x1, detection.y1, detection.x2, detection.y2] if detection else None
         ),
+        "center_px": _pair(getattr(outcome, "center_px", None)),
+        "center_norm": _pair(getattr(outcome, "center_norm", None)),
         "used_segmentation": detection is not None and detection.polygon is not None,
         "mask_area_px": detection.mask_area if detection else None,
         "candidate_count": outcome.candidate_count,
         "status": outcome.status,
         "reject_reason": outcome.reject_reason,
+        "session_id": session_id,
+        "model_name": model_name,
+        "checkpoint": checkpoint,
+        "extraction_config": config_path,
+        "classifier_ms": None if classifier_ms is None else round(float(classifier_ms), 3),
     }
     return payload
+
+
+def _metrics_snapshot(metrics: LiveMetrics, rolling: _RollingMetrics, started: float, capture) -> dict:
+    elapsed = max(time.monotonic() - started, 1e-9)
+    metrics.captured_frames = capture.captured_frames
+    metrics.dropped_frames = capture.dropped_frames
+    return {
+        "capture_fps": metrics.captured_frames / elapsed,
+        "processed_fps": metrics.processed_frames / elapsed,
+        "yolo_ms": rolling.average(rolling.yolo_ms),
+        "event_ms": rolling.average(rolling.event_ms),
+        "classifier_ms": rolling.average(rolling.classifier_ms),
+        "accepted_latency_ms": rolling.average(rolling.accepted_latency_ms),
+        "captured_frames": metrics.captured_frames,
+        "processed_frames": metrics.processed_frames,
+        "dropped_frames": metrics.dropped_frames,
+        "accepted_passages": metrics.accepted_passages,
+        "rejected_passages": metrics.rejected_passages,
+    }
 
 
 def run_live_inference(
@@ -194,6 +251,13 @@ def run_live_inference(
     detector=None,
     classifier=None,
     capture=None,
+    frame_callback: Callable[[np.ndarray, FrameResult, float], None] | None = None,
+    metrics_callback: Callable[[dict], None] | None = None,
+    status_callback: Callable[[str], None] | None = None,
+    stop_event: threading.Event | None = None,
+    session_id: str | None = None,
+    config_path: str | None = None,
+    should_classify: Callable[[], bool] | None = None,
 ) -> LiveMetrics:
     """Run event-driven inference with one classifier call per accepted passage."""
     detector = detector or build_detector(config.detector)
@@ -216,37 +280,72 @@ def run_live_inference(
     metrics = LiveMetrics()
     rolling = _RollingMetrics()
     started = time.monotonic()
+    wall_start = datetime.now().astimezone()
+    session_id = session_id or wall_start.strftime("live_%Y%m%d_%H%M%S")
+    checkpoint_text = None if checkpoint in {None, ""} else str(checkpoint)
+    model_name = getattr(classifier, "model_name", None)
     last_report = started
     warmed = False
+    announced = False
     processed_sequence = 0
     last_timestamp = 0.0
 
+    def classify_now() -> bool:
+        return True if should_classify is None else bool(should_classify())
+
     def handle(outcome: PassageOutcome, now_relative: float) -> None:
-        if outcome.accepted:
+        prediction = None
+        confidence = None
+        classifier_ms = None
+        if outcome.accepted and classify_now():
             classifier_start = time.perf_counter()
             prediction, confidence = classifier.predict_array(outcome.crop)
-            rolling.classifier_ms.append((time.perf_counter() - classifier_start) * 1000.0)
+            classifier_ms = (time.perf_counter() - classifier_start) * 1000.0
+            rolling.classifier_ms.append(classifier_ms)
             metrics.accepted_passages += 1
             if outcome.passage_started_s is not None:
                 rolling.accepted_latency_ms.append(
                     max(0.0, now_relative - outcome.passage_started_s) * 1000.0
                 )
-            emit(_event_payload(outcome, prediction, confidence))
+        elif outcome.accepted:
+            metrics.accepted_passages += 1
         else:
             metrics.rejected_passages += 1
-            emit(_event_payload(outcome))
+        payload = _event_payload(
+            outcome,
+            prediction,
+            confidence,
+            wall_start=wall_start,
+            session_id=session_id,
+            checkpoint=checkpoint_text,
+            model_name=model_name,
+            config_path=config_path,
+            classifier_ms=classifier_ms,
+        )
+        if event_callback is not None and outcome.crop is not None:
+            payload["crop"] = outcome.crop
+        emit(payload)
+
+    def publish_metrics() -> None:
+        if metrics_callback is not None:
+            metrics_callback(_metrics_snapshot(metrics, rolling, started, capture))
 
     try:
-        while True:
+        while stop_event is None or not stop_event.is_set():
             packet = capture.read(timeout=0.1)
             if packet is None:
-                if capture.exhausted:
+                if capture.exhausted or (stop_event is not None and stop_event.is_set()):
                     break
                 continue
             if not warmed and config.runtime.warmup:
+                if status_callback is not None:
+                    status_callback("Warming models...")
                 detector.warmup(np.zeros_like(packet.image))
                 classifier.warmup()
                 warmed = True
+            if not announced and status_callback is not None:
+                status_callback("RUNNING")
+                announced = True
             timestamp_s = packet.captured_at - started
             last_timestamp = timestamp_s
             run_detection = processed_sequence % config.runtime.detect_every_n_frames == 0
@@ -260,26 +359,27 @@ def run_live_inference(
             metrics.processed_frames += 1
             rolling.yolo_ms.append(result.detector_latency_ms)
             rolling.event_ms.append(result.event_latency_ms)
+            if frame_callback is not None:
+                frame_callback(packet.image, result, timestamp_s)
             now_relative = time.monotonic() - started
             for outcome in result.outcomes:
                 handle(outcome, now_relative)
+            publish_metrics()
 
             now = time.monotonic()
             if now - last_report >= config.runtime.report_interval_seconds:
-                elapsed = max(now - started, 1e-9)
-                metrics.captured_frames = capture.captured_frames
-                metrics.dropped_frames = capture.dropped_frames
+                snapshot = _metrics_snapshot(metrics, rolling, started, capture)
                 print(
                     "live "
-                    f"capture_fps={metrics.captured_frames / elapsed:.1f} "
-                    f"processed_fps={metrics.processed_frames / elapsed:.1f} "
-                    f"yolo_ms={rolling.average(rolling.yolo_ms):.1f} "
-                    f"event_ms={rolling.average(rolling.event_ms):.2f} "
-                    f"classifier_ms={rolling.average(rolling.classifier_ms):.1f} "
-                    f"accepted_latency_ms={rolling.average(rolling.accepted_latency_ms):.1f} "
-                    f"dropped={metrics.dropped_frames} "
-                    f"accepted={metrics.accepted_passages} "
-                    f"rejected={metrics.rejected_passages}",
+                    f"capture_fps={snapshot['capture_fps']:.1f} "
+                    f"processed_fps={snapshot['processed_fps']:.1f} "
+                    f"yolo_ms={snapshot['yolo_ms']:.1f} "
+                    f"event_ms={snapshot['event_ms']:.2f} "
+                    f"classifier_ms={snapshot['classifier_ms']:.1f} "
+                    f"accepted_latency_ms={snapshot['accepted_latency_ms']:.1f} "
+                    f"dropped={snapshot['dropped_frames']} "
+                    f"accepted={snapshot['accepted_passages']} "
+                    f"rejected={snapshot['rejected_passages']}",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -290,6 +390,7 @@ def run_live_inference(
         now_relative = time.monotonic() - started
         for outcome in processor.close(last_timestamp):
             handle(outcome, now_relative)
+        publish_metrics()
     except KeyboardInterrupt:
         now_relative = time.monotonic() - started
         for outcome in processor.close(last_timestamp):

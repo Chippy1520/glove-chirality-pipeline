@@ -73,6 +73,8 @@ class TorchClassifier:
         )
         self.model.load_state_dict(saved["state_dict"])
         self.model.eval()
+        self.model_name = saved["model_name"]
+        self.checkpoint_path = str(checkpoint)
         self.image_size = int(saved["image_size"])
         self.transform = transforms.Compose(
             [

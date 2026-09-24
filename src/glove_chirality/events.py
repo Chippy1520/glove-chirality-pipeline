@@ -738,15 +738,20 @@ class PassageProcessor:
         frame_index: int,
         timestamp_s: float,
         run_detection: bool = True,
+        detections: list | None = None,
+        detector_latency_ms: float | None = None,
     ) -> FrameResult:
         if self.last_timestamp_s is not None and timestamp_s < self.last_timestamp_s:
             raise ValueError("passage timestamps must be nondecreasing")
         self.last_timestamp_s = timestamp_s
-        if not run_detection:
-            return FrameResult((), (), 0.0, 0.0)
-        detect_start = time.perf_counter()
-        detections = self.detector.detect(frame)
-        detector_latency = (time.perf_counter() - detect_start) * 1000.0
+        if detections is None:
+            if not run_detection:
+                return FrameResult((), (), 0.0, 0.0)
+            detect_start = time.perf_counter()
+            detections = self.detector.detect(frame)
+            detector_latency = (time.perf_counter() - detect_start) * 1000.0
+        else:
+            detector_latency = 0.0 if detector_latency_ms is None else float(detector_latency_ms)
         event_start = time.perf_counter()
         height, width = frame.shape[:2]
         self._frame_width = int(width)

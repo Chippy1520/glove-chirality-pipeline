@@ -146,11 +146,14 @@ class YoloDetector(GloveDetector):
 
         options: dict[str, object] = {
             "conf": self.config.yolo_confidence,
-            "iou": self.config.yolo_iou,
             "imgsz": self.config.yolo_imgsz,
             "max_det": self.config.yolo_max_det,
             "verbose": False,
         }
+        if self.config.yolo_nms:
+            options["iou"] = self.config.yolo_iou
+        else:
+            options["nms"] = False
         if self.config.yolo_half:
             if getattr(self, "_supports_quantize", False):
                 options["quantize"] = 16

@@ -176,3 +176,58 @@ def test_frame_callback_sees_existing_detections_without_extra_detect_calls():
     assert detector.warmups == 0
     assert seen == [((24, 24, 3), (), seen[0][2])]
     assert seen[0][2] >= 0
+
+
+def test_stage_pipeline_detects_while_classifier_runs():
+    import threading
+
+    frame = np.full((40, 40, 3), 90, dtype=np.uint8)
+    detection = Detection(8, 8, 28, 28, 0.9)
+
+    class Detector:
+        def __init__(self):
+            self.calls = 0
+            self.during = 0
+            self.classifier = None
+
+        def detect(self, _frame):
+            self.calls += 1
+            if self.classifier is not None and self.classifier.busy.is_set():
+                self.during += 1
+            time.sleep(0.03)
+            return [detection] if self.calls == 1 else []
+
+        def warmup(self, _frame):
+            return None
+
+    class Classifier:
+        def __init__(self):
+            self.busy = threading.Event()
+
+        def warmup(self):
+            return None
+
+        def predict_array(self, _crop):
+            self.busy.set()
+            time.sleep(0.2)
+            return "right", 0.9
+
+    classifier = Classifier()
+    detector = Detector()
+    detector.classifier = classifier
+    config = ExtractionConfig(
+        detector=DetectorConfig(roi=(0, 0, 1, 1), trigger_zone=(0, 0, 1, 1)),
+        event=EventConfig(min_detected_frames=1, exit_missing_frames=1, cooldown_frames=0, output_size=16),
+        runtime=RuntimeConfig(report_interval_seconds=60, warmup=False, stage_pipeline=True),
+    )
+    run_live_inference(
+        0,
+        "unused.pt",
+        config,
+        event_callback=lambda _payload: None,
+        detector=detector,
+        classifier=classifier,
+        capture=_ImmediateCapture([(index, frame.copy()) for index in range(6)]),
+    )
+    assert detector.during >= 1
+    assert classifier.busy.is_set()

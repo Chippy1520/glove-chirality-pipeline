@@ -317,3 +317,12 @@ def test_detection_canonicalizes_polygon_to_deeply_immutable_tuple():
     detection = Detection(1, 2, 5, 6, 0.9, polygon=source)
     source[0][0] = 99
     assert detection.polygon == ((1.0, 2.0), (3.0, 4.0), (5.0, 6.0))
+
+
+def test_query_head_does_not_ask_for_nms():
+    result = SimpleNamespace(boxes=[], masks=None)
+    config = DetectorConfig(backend="yolo", yolo_model="yolo26s-seg.pt", yolo_nms=False, yolo_iou=0.5)
+    detector = _detector(config, result)
+    detector.detect(np.zeros((32, 32, 3), dtype=np.uint8))
+    assert detector.model.options["nms"] is False
+    assert "iou" not in detector.model.options

@@ -39,6 +39,7 @@ class DetectorConfig:
     yolo_require_masks: bool = False
     yolo_imgsz: int = 640
     yolo_iou: float = 0.50
+    yolo_nms: bool = True
     yolo_max_det: int = 5
     yolo_crop_to_roi: bool = False
     yolo_min_box_area_ratio: float = 0.0
@@ -193,6 +194,7 @@ class RuntimeConfig:
     detect_every_n_frames: int = 1
     report_interval_seconds: float = 5.0
     warmup: bool = True
+    stage_pipeline: bool = False
 
     def __post_init__(self):
         if self.capture_queue_size <= 0:

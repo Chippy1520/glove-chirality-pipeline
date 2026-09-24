@@ -1,8 +1,8 @@
 """Conveyor passage tracker.
 
-One YOLO detection list in, one crop per physical glove out. A weak box may
-keep an existing identity. It cannot create one, and it cannot become the
-Layer 2 crop.
+One YOLO detection list in, one crop per physical glove out. Identity is the
+lane and the belt direction, not a distance cutoff. A weak box may keep an
+existing identity. It cannot create one, and it cannot become the Layer 2 crop.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from glove_chirality.events import (
     PassageOutcome,
     _box_iou,
     _direction_increasing,
-    _polygon_iou,
     create_event_crop,
     directional_crossing_alpha,
     trigger_line_position,
@@ -125,14 +124,10 @@ class PassageTracker:
                 self._update_track(
                     track, detection, timestamp_s, frame, frame_index, width, height, weak=True, siblings=strong
                 )
-        absorbed, unmatched_strong = self._absorb_same_lane(
-            unmatched, unmatched_strong, timestamp_s, frame, frame_index, width, height, siblings=strong
-        )
-        del absorbed
         for detection in unmatched_strong:
             if detection.confidence < self.config.event.new_track_conf:
                 continue
-            if not self._eligible_birth(detection, width, height):
+            if not self._eligible_birth(detection, width, height, timestamp_s):
                 continue
             self._birth(detection, timestamp_s, frame, frame_index)
         self._retire(timestamp_s, width, height)
@@ -278,18 +273,19 @@ class PassageTracker:
             )
         return pairs, remaining
 
-    def _eligible_birth(self, detection: Detection, width: int, height: int) -> bool:
+    def _eligible_birth(self, detection: Detection, width: int, height: int, timestamp_s: float) -> bool:
         axis, line = trigger_line_position(self.config, width, height)
         hysteresis = _hysteresis(self.config, width, height, axis)
         increasing = _direction_increasing(self.config.event.belt_direction)
         current = detection.center[1] if axis == "y" else detection.center[0]
         if not _upstream(current, line, hysteresis, increasing):
             return False
-        return not any(
-            _same_lane(track, detection, self.config) and _along_gap(track, detection, self.config) <= _wide_gate(self.config, width, height)
-            for track in self._passages
-            if not track.event_emitted
-        )
+        for track in self._passages:
+            if track.event_emitted or not _same_lane(track, detection, self.config):
+                continue
+            if track.last_seen_s < timestamp_s or not _is_behind(track, detection, self.config):
+                return False
+        return True
 
     def _near_existing(self, detection: Detection, width: int, height: int) -> bool:
         return any(
@@ -540,25 +536,10 @@ def _associate(tracks, detections, width, height, config: ExtractionConfig, *, r
 
 
 def _pair_cost(track: _Passage, detection: Detection, width: int, height: int, config: ExtractionConfig, *, relaxed: bool, lane_only: bool = False) -> float:
-    if lane_only and not _same_lane(track, detection, config):
+    del relaxed, lane_only, width, height
+    if not _owns(track, detection, config):
         return float("inf")
-    diagonal = max(1.0, float(np.hypot(width, height)))
-    gate = _wide_gate(config, width, height) if lane_only else config.event.max_track_distance_ratio * diagonal * (1.35 if relaxed else 1.0)
-    distance = float(np.hypot(detection.center[0] - track.predicted[0], detection.center[1] - track.predicted[1]))
-    if distance > gate:
-        return float("inf")
-    axis, _line = trigger_line_position(config, width, height)
-    increasing = _direction_increasing(config.event.belt_direction)
-    delta = (detection.center[1] - track.predicted[1]) if axis == "y" else (detection.center[0] - track.predicted[0])
-    opposed = (delta > 0) != increasing and abs(delta) > max(8.0, 0.5 * max(detection.width, detection.height))
-    mask = _polygon_iou(track.detection, detection) if track.detection.polygon and detection.polygon else 0.0
-    return (
-        0.45 * distance / diagonal
-        + 0.25 * (1.0 - _box_iou(track.detection, detection))
-        + 0.15 * (1.0 - mask)
-        + (0.35 if opposed else 0.0)
-        + 0.05 * abs(detection.area - track.detection.area) / max(detection.area, track.detection.area, 1)
-    )
+    return _along_gap(track, detection, config)
 
 
 def _assign(costs: list[list[float]]) -> list[tuple[int, int]]:
@@ -605,6 +586,26 @@ def _downstream(coord: float, line: float, hysteresis: float, increasing: bool) 
     return coord >= line + hysteresis if increasing else coord <= line - hysteresis
 
 
+def _owns(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
+    """A live glove owns every later box in its lane. A jump is not a new glove."""
+    return _same_lane(track, detection, config)
+
+
+def _is_behind(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
+    axis = _motion_axis(config)
+    increasing = _direction_increasing(config.event.belt_direction)
+    track_along = _cross(track.predicted, axis)
+    det_along = _cross(detection.center, axis)
+    glove = max(
+        track.detection.height if axis == "y" else track.detection.width,
+        detection.height if axis == "y" else detection.width,
+        1,
+    )
+    if increasing:
+        return det_along < track_along - glove
+    return det_along > track_along + glove
+
+
 def _same_lane(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
     axis = _cross_axis(config)
     gap = abs(_cross(detection.center, axis) - _cross(track.predicted, axis))
@@ -614,11 +615,6 @@ def _same_lane(track: _Passage, detection: Detection, config: ExtractionConfig) 
 def _along_gap(track: _Passage, detection: Detection, config: ExtractionConfig) -> float:
     axis = _motion_axis(config)
     return abs(_cross(detection.center, axis) - _cross(track.predicted, axis))
-
-
-def _wide_gate(config: ExtractionConfig, width: int, height: int) -> float:
-    diagonal = max(1.0, float(np.hypot(width, height)))
-    return 2.5 * config.event.max_track_distance_ratio * diagonal
 
 
 def _crop_rejected(detection: Detection, siblings: list[Detection], width: int, height: int) -> bool:

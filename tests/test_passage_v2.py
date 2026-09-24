@@ -218,7 +218,21 @@ def test_lost_track_writes_a_terminal_reason():
     assert "lost_before_trigger" in reasons or "insufficient_confirmation" in reasons
 
 
-def test_same_lane_jump_does_not_birth_a_second_track():
+def test_a_jump_larger_than_any_distance_gate_stays_one_glove():
+    config = _config()
+    config.event.max_track_distance_ratio = 0.01
+    config.event.validate()
+    accepted = _run(
+        [
+            [_box(100, 170, 0.9)],
+            [_box(100, 30, 0.9)],
+        ],
+        config,
+    )
+    assert len(accepted) == 1
+
+
+def test_two_lanes_stay_two_gloves():
     config = _config()
     config.event.max_track_distance_ratio = 0.12
     config.event.validate()

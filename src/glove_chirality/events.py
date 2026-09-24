@@ -740,6 +740,7 @@ class PassageProcessor:
         run_detection: bool = True,
         detections: list | None = None,
         detector_latency_ms: float | None = None,
+        tracking_only: list | None = None,
     ) -> FrameResult:
         if self.last_timestamp_s is not None and timestamp_s < self.last_timestamp_s:
             raise ValueError("passage timestamps must be nondecreasing")
@@ -750,8 +751,12 @@ class PassageProcessor:
             detect_start = time.perf_counter()
             detections = self.detector.detect(frame)
             detector_latency = (time.perf_counter() - detect_start) * 1000.0
+            if tracking_only is None:
+                reader = getattr(self.detector, "tracking_partials", None)
+                tracking_only = [] if reader is None else list(reader())
         else:
             detector_latency = 0.0 if detector_latency_ms is None else float(detector_latency_ms)
+            tracking_only = tracking_only or []
         event_start = time.perf_counter()
         height, width = frame.shape[:2]
         self._frame_width = int(width)
@@ -760,7 +765,9 @@ class PassageProcessor:
             self.config.event.tracker_mode == "passage_v2"
             and self.config.event.trigger_line_enabled
         ):
-            outcomes = self._passage_v2().update(frame, detections, frame_index, timestamp_s)
+            outcomes = self._passage_v2().update(
+                frame, detections, frame_index, timestamp_s, tracking_only=tracking_only
+            )
             event_latency = (time.perf_counter() - event_start) * 1000.0
             return FrameResult(tuple(outcomes), tuple(detections), detector_latency, event_latency)
         if self.config.event.trigger_line_enabled:
@@ -888,7 +895,7 @@ class PassageProcessor:
         self.last_timestamp_s = timestamp_s
         if self.config.event.trigger_line_enabled:
             if self._passage_tracker is not None:
-                self._passage_tracker.close()
+                return tuple(self._passage_tracker.close())
             self._tracks.clear()
             return ()
         outcomes: list[PassageOutcome] = []

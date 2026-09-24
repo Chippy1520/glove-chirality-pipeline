@@ -232,5 +232,14 @@ class YoloDetector(GloveDetector):
         self.last_diagnostics = diagnostics
         return detections, diagnostics
 
+    def tracking_partials(self) -> list[Detection]:
+        """Small edge boxes may keep a track. Oversized blobs must not move one."""
+        maximum = self.config.yolo_max_box_area_ratio
+        return [
+            item.detection
+            for item in self.last_diagnostics.size_rejected
+            if item.box_area_ratio <= maximum
+        ]
+
     def warmup(self, frame: np.ndarray) -> None:
         self.detect(frame)

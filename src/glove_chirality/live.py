@@ -427,7 +427,7 @@ def run_live_inference(
     detect_queue: queue.Queue = queue.Queue(maxsize=2)
     detect_error: list[BaseException] = []
 
-    def consume_packet(packet: CapturedFrame, detections, yolo_ms: float | None) -> bool:
+    def consume_packet(packet: CapturedFrame, detections, yolo_ms: float | None, tracking_only=None) -> bool:
         nonlocal last_timestamp, processed_sequence, announced, last_report
         timestamp_s = packet.captured_at - started
         last_timestamp = timestamp_s
@@ -441,6 +441,7 @@ def run_live_inference(
                 timestamp_s,
                 detections=detections,
                 detector_latency_ms=yolo_ms,
+                tracking_only=tracking_only,
             )
         processed_sequence += 1
         metrics.processed_frames += 1
@@ -489,11 +490,13 @@ def run_live_inference(
                     started_detect = time.perf_counter()
                     found = detector.detect(packet.image)
                     elapsed = (time.perf_counter() - started_detect) * 1000.0
+                    reader = getattr(detector, "tracking_partials", None)
+                    partials = [] if reader is None else list(reader())
                 else:
-                    found, elapsed = [], 0.0
+                    found, elapsed, partials = [], 0.0, []
                 while not pipeline_stop.is_set():
                     try:
-                        detect_queue.put((packet, found, elapsed), timeout=0.1)
+                        detect_queue.put((packet, found, elapsed, partials), timeout=0.1)
                         break
                     except queue.Full:
                         continue
@@ -518,8 +521,8 @@ def run_live_inference(
                 item = detect_queue.get()
                 if item is None:
                     break
-                packet, found, elapsed = item
-                if not consume_packet(packet, found, elapsed):
+                packet, found, elapsed, partials = item
+                if not consume_packet(packet, found, elapsed, partials):
                     break
         else:
             while stop_event is None or not stop_event.is_set():

@@ -67,9 +67,14 @@ class PassageTracker:
         self._passages: list[_Passage] = []
         self._next_passage_id = 1
         self._ledger: list[_Passage] = []
+        self._dropped: list[PassageOutcome] = []
+        self._width = 1
+        self._height = 1
 
-    def close(self) -> None:
+    def close(self) -> list[PassageOutcome]:
+        outcomes = [self._terminal(track, self._terminal_reason(track)) for track in self._passages if not track.event_emitted]
         self._passages.clear()
+        return outcomes
 
     def update(
         self,
@@ -77,8 +82,11 @@ class PassageTracker:
         detections: list[Detection],
         frame_index: int,
         timestamp_s: float,
+        tracking_only: list[Detection] | None = None,
     ) -> list[PassageOutcome]:
         height, width = frame.shape[:2]
+        self._width, self._height = width, height
+        self._dropped = []
         observed = [item for item in detections if _center_in_roi(item, self.config, width, height)]
         strong, weak = self._split(observed)
         self._predict(timestamp_s)
@@ -98,12 +106,27 @@ class PassageTracker:
             )
             for track, detection in rescued:
                 self._update_track(track, detection, timestamp_s, frame, frame_index, width, height, weak=True)
+        partials = []
+        frame_area = max(1, width * height)
+        maximum = self.config.detector.yolo_max_box_area_ratio
+        for item in tracking_only or []:
+            if not _center_in_roi(item, self.config, width, height):
+                continue
+            if item.area / frame_area > maximum:
+                continue
+            partials.append(item)
+        if partials and unmatched:
+            rescued, unmatched, _ignored = _associate(
+                unmatched, partials, width, height, self.config, relaxed=True
+            )
+            for track, detection in rescued:
+                self._update_track(track, detection, timestamp_s, frame, frame_index, width, height, weak=True)
         for detection in unmatched_strong:
             if detection.confidence < self.config.event.new_track_conf:
                 continue
             self._birth(detection, timestamp_s, frame, frame_index)
-        self._retire(timestamp_s)
-        return self._emit_ready(timestamp_s, width, height)
+        self._retire(timestamp_s, width, height)
+        return self._emit_ready(timestamp_s, width, height) + self._dropped
 
     def _split(self, detections: list[Detection]) -> tuple[list[Detection], list[Detection]]:
         event = self.config.event
@@ -147,6 +170,8 @@ class PassageTracker:
         track.missing_since_s = None
         if weak:
             track.weak_hits += 1
+            if track.strong_hits >= 2:
+                self._advance_trigger(track, prev_x, prev_y, prev_t, cx, cy, timestamp_s, width, height)
             return
         track.strong_hits += 1
         self._advance_trigger(track, prev_x, prev_y, prev_t, cx, cy, timestamp_s, width, height)
@@ -230,7 +255,7 @@ class PassageTracker:
             for track in self._passages
         )
 
-    def _retire(self, timestamp_s: float) -> None:
+    def _retire(self, timestamp_s: float, width: int, height: int) -> None:
         alive = []
         for track in self._passages:
             if track.last_seen_s == timestamp_s:
@@ -240,8 +265,12 @@ class PassageTracker:
                 track.missing_since_s = timestamp_s
             if timestamp_s - track.missing_since_s <= self.config.event.reentry_time_s:
                 alive.append(track)
-            elif track.event_emitted:
+                continue
+            if track.event_emitted:
                 self._ledger.append(track)
+                continue
+            self._dropped.append(self._terminal(track, self._terminal_reason(track), width, height))
+            track.event_emitted = True
         self._passages = alive
         cutoff = timestamp_s - 2.0
         self._ledger = [item for item in self._ledger if (item.crossing_s or item.last_seen_s) >= cutoff]
@@ -253,9 +282,12 @@ class PassageTracker:
                 continue
             if self._duplicate(track, width, height):
                 track.event_emitted = True
+                self._dropped.append(self._terminal(track, "duplicate_suppressed", width, height))
                 continue
             selected = _select_candidate(track)
             if selected is None or selected.pixels.size == 0:
+                track.event_emitted = True
+                self._dropped.append(self._terminal(track, "no_valid_crop", width, height))
                 continue
             local = Detection(
                 0,
@@ -291,6 +323,43 @@ class PassageTracker:
             track.event_emitted = True
             self._ledger.append(track)
         return outcomes
+
+    def _terminal_reason(self, track: _Passage) -> str:
+        if track.strong_hits < 2:
+            return "insufficient_confirmation"
+        if track.crossing_latched and not track.candidates:
+            return "no_valid_crop"
+        if not track.crossing_latched:
+            return "lost_before_trigger"
+        return "no_valid_crop"
+
+    def _terminal(self, track: _Passage, reason: str, width: int | None = None, height: int | None = None) -> PassageOutcome:
+        width = self._width if width is None else width
+        height = self._height if height is None else height
+        cx, cy, _seen = track.observed
+        return PassageOutcome(
+            self._next_event_id(),
+            self.source_video,
+            self.label,
+            "rejected",
+            reason,
+            0,
+            track.last_seen_s,
+            track.strong_hits + track.weak_hits,
+            track.detection,
+            0.0,
+            None,
+            None,
+            track.first_seen_s,
+            track.crossing_s,
+            track.crossing_px,
+            None if track.crossing_px is None else (
+                track.crossing_px[0] / max(width, 1),
+                track.crossing_px[1] / max(height, 1),
+            ),
+            (float(cx), float(cy)),
+            (float(cx) / max(width, 1), float(cy) / max(height, 1)),
+        )
 
     def _mark_separated(self, pairs) -> None:
         axis = _cross_axis(self.config)

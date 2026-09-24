@@ -26,23 +26,29 @@ def _box(cx: int, cy: int, confidence: float = 0.8, size: int = 20) -> Detection
 
 
 class _Script:
-    def __init__(self, frames):
+    def __init__(self, frames, partials=None):
         self.frames = frames
+        self.partials = partials or [[] for _ in frames]
         self.calls = 0
+        self._current: list = []
 
     def detect(self, frame):
         del frame
+        self._current = self.partials[self.calls] if self.calls < len(self.partials) else []
         items = self.frames[self.calls] if self.calls < len(self.frames) else []
         self.calls += 1
         return items
+
+    def tracking_partials(self):
+        return list(self._current)
 
     def warmup(self, frame):
         del frame
 
 
-def _run(frames, config=None):
+def _run(frames, config=None, tracking=None):
     config = config or _config()
-    processor = PassageProcessor(_Script(frames), config, "belt.mp4", "live")
+    processor = PassageProcessor(_Script(frames, tracking), config, "belt.mp4", "live")
     image = np.zeros((200, 200, 3), dtype=np.uint8)
     outcomes = []
     for index, _items in enumerate(frames):
@@ -169,6 +175,47 @@ def test_same_lane_glove_half_a_second_later_is_not_a_duplicate():
         [_box(100, 70, 0.8)],
     ], config)
     assert len(accepted) == 2
+
+
+def test_weak_crossing_emits_the_strong_frame_once():
+    accepted = _run([
+        [_box(100, 150, 0.80)],
+        [_box(100, 130, 0.90)],
+        [_box(100, 70, 0.20)],
+        [_box(100, 40, 0.85)],
+    ])
+    assert len(accepted) == 1
+    assert accepted[0].detection is not None
+    assert accepted[0].detection.confidence == 0.90
+
+
+def test_partial_box_keeps_the_track_and_is_not_the_crop():
+    accepted = _run(
+        [
+            [_box(100, 150, 0.80)],
+            [_box(100, 130, 0.90)],
+            [],
+            [_box(100, 50, 0.85)],
+        ],
+        tracking=[[], [], [_box(100, 90, 0.80, size=8)], []],
+    )
+    assert len(accepted) == 1
+    assert accepted[0].detection is not None
+    assert accepted[0].detection.confidence == 0.90
+
+
+def test_lost_track_writes_a_terminal_reason():
+    config = _config()
+    config.event.reentry_time_s = 0.15
+    config.event.validate()
+    processor = PassageProcessor(_Script([[_box(100, 150, 0.8)], [], [], []]), config, "belt.mp4", "live")
+    image = np.zeros((200, 200, 3), dtype=np.uint8)
+    outcomes = []
+    for index in range(4):
+        outcomes.extend(processor.process(image, index, index * 0.1).outcomes)
+    outcomes.extend(processor.close(0.4))
+    reasons = [item.reject_reason for item in outcomes if not item.accepted]
+    assert "lost_before_trigger" in reasons or "insufficient_confirmation" in reasons
 
 
 def test_best_pre_cross_frame_is_selected():

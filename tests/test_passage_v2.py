@@ -208,14 +208,32 @@ def test_lost_track_writes_a_terminal_reason():
     config = _config()
     config.event.reentry_time_s = 0.15
     config.event.validate()
+    processor = PassageProcessor(
+        _Script([[_box(100, 150, 0.8)], [_box(100, 140, 0.8)], [], [], []]),
+        config,
+        "belt.mp4",
+        "live",
+    )
+    image = np.zeros((200, 200, 3), dtype=np.uint8)
+    outcomes = []
+    for index in range(5):
+        outcomes.extend(processor.process(image, index, index * 0.1).outcomes)
+    outcomes.extend(processor.close(0.5))
+    reasons = [item.reject_reason for item in outcomes if not item.accepted]
+    assert "lost_before_trigger" in reasons
+
+
+def test_one_frame_flicker_is_not_a_track():
+    config = _config()
+    config.event.reentry_time_s = 0.15
+    config.event.validate()
     processor = PassageProcessor(_Script([[_box(100, 150, 0.8)], [], [], []]), config, "belt.mp4", "live")
     image = np.zeros((200, 200, 3), dtype=np.uint8)
     outcomes = []
     for index in range(4):
         outcomes.extend(processor.process(image, index, index * 0.1).outcomes)
     outcomes.extend(processor.close(0.4))
-    reasons = [item.reject_reason for item in outcomes if not item.accepted]
-    assert "lost_before_trigger" in reasons or "insufficient_confirmation" in reasons
+    assert outcomes == []
 
 
 def test_a_jump_larger_than_any_distance_gate_stays_one_glove():

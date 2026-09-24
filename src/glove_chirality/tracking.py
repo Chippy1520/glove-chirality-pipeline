@@ -1,8 +1,9 @@
 """Conveyor passage tracker.
 
-One YOLO detection list in, one crop per physical glove out. Identity is the
-lane and the belt direction, not a distance cutoff. A weak box may keep an
-existing identity. It cannot create one, and it cannot become the Layer 2 crop.
+One YOLO detection list in, one crop per physical glove out. A box is not a
+new glove until a second observation confirms it. Matching uses buffered box
+overlap, the belt direction, and the lane. A weak box may keep an identity.
+It cannot create one, and it cannot become the Layer 2 crop.
 """
 
 from __future__ import annotations
@@ -31,6 +32,14 @@ class _Candidate:
     timestamp_s: float
     quality: float
     frame_index: int
+
+
+@dataclass
+class _Pending:
+    detection: Detection
+    timestamp_s: float
+    frame_index: int
+    pixels: np.ndarray
 
 
 @dataclass
@@ -66,7 +75,7 @@ class PassageTracker:
         self._passages: list[_Passage] = []
         self._next_passage_id = 1
         self._ledger: list[_Passage] = []
-        self._dropped: list[PassageOutcome] = []
+        self._pending: list[_Pending] = []
         self._width = 1
         self._height = 1
 
@@ -124,12 +133,16 @@ class PassageTracker:
                 self._update_track(
                     track, detection, timestamp_s, frame, frame_index, width, height, weak=True, siblings=strong
                 )
+        unmatched_strong = self._confirm_pending(
+            unmatched_strong, timestamp_s, frame, frame_index
+        )
         for detection in unmatched_strong:
             if detection.confidence < self.config.event.new_track_conf:
                 continue
             if not self._eligible_birth(detection, width, height, timestamp_s):
                 continue
-            self._birth(detection, timestamp_s, frame, frame_index)
+            self._hold_or_confirm(detection, timestamp_s, frame, frame_index)
+        self._expire_pending(timestamp_s)
         self._retire(timestamp_s, width, height)
         return self._emit_ready(timestamp_s, width, height) + self._dropped
 
@@ -231,7 +244,14 @@ class PassageTracker:
         track.crossing_s = prev_t + alpha * (timestamp_s - prev_t)
         track.crossing_px = (float(cross_x), float(cross_y))
 
-    def _birth(self, detection: Detection, timestamp_s: float, frame: np.ndarray, frame_index: int) -> None:
+    def _birth(
+        self,
+        detection: Detection,
+        timestamp_s: float,
+        frame: np.ndarray,
+        frame_index: int,
+        pixels: np.ndarray | None = None,
+    ) -> None:
         cx, cy = (float(detection.center[0]), float(detection.center[1]))
         track = _Passage(
             passage_id=self._next_passage_id,
@@ -244,7 +264,8 @@ class PassageTracker:
             first_along=cy if _motion_axis(self.config) == "y" else cx,
         )
         self._next_passage_id += 1
-        pixels = frame[detection.y1:detection.y2, detection.x1:detection.x2].copy()
+        if pixels is None:
+            pixels = frame[detection.y1:detection.y2, detection.x1:detection.x2].copy()
         width, height = frame.shape[1], frame.shape[0]
         if pixels.size and not _crop_rejected(detection, [], width, height):
             track.candidates.append(_Candidate(
@@ -260,6 +281,40 @@ class PassageTracker:
         current = cy if axis == "y" else cx
         track.armed = _upstream(current, line, hysteresis, increasing)
         self._passages.append(track)
+
+    def _confirm_pending(self, detections, timestamp_s, frame, frame_index):
+        remaining = []
+        confirmed = []
+        for detection in detections:
+            match = next((item for item in self._pending if _continues(item.detection, detection, self.config)), None)
+            if match is None:
+                remaining.append(detection)
+                continue
+            self._pending = [item for item in self._pending if item is not match]
+            self._birth(match.detection, match.timestamp_s, frame, match.frame_index, match.pixels)
+            self._update_track(
+                self._passages[-1],
+                detection,
+                timestamp_s,
+                frame,
+                frame_index,
+                frame.shape[1],
+                frame.shape[0],
+                weak=False,
+            )
+            confirmed.append((self._passages[-1], detection))
+        self._mark_separated(confirmed)
+        return remaining
+
+    def _hold_or_confirm(self, detection: Detection, timestamp_s: float, frame: np.ndarray, frame_index: int) -> None:
+        if any(_continues(item.detection, detection, self.config) for item in self._pending):
+            return
+        pixels = frame[detection.y1:detection.y2, detection.x1:detection.x2].copy()
+        self._pending.append(_Pending(detection, timestamp_s, frame_index, pixels))
+
+    def _expire_pending(self, timestamp_s: float) -> None:
+        limit = self.config.event.reentry_time_s
+        self._pending = [item for item in self._pending if timestamp_s - item.timestamp_s <= limit]
 
     def _absorb_same_lane(self, tracks, detections, timestamp_s, frame, frame_index, width, height, siblings):
         if not tracks or not detections:
@@ -587,8 +642,53 @@ def _downstream(coord: float, line: float, hysteresis: float, increasing: bool) 
 
 
 def _owns(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
-    """A live glove owns every later box in its lane. A jump is not a new glove."""
-    return _same_lane(track, detection, config)
+    """ByteTrack/OC-SORT match: buffered overlap, belt ray, or the same lane."""
+    if _same_lane(track, detection, config):
+        return True
+    if _buffered_iou(track.detection, detection, 2.0) > 0:
+        return True
+    return _on_belt_ray(track, detection, config)
+
+
+def _continues(previous: Detection, detection: Detection, config: ExtractionConfig) -> bool:
+    fake = _Passage(
+        passage_id=0,
+        detection=previous,
+        observed=(float(previous.center[0]), float(previous.center[1]), 0.0),
+        predicted=previous.center,
+    )
+    return _owns(fake, detection, config)
+
+
+def _buffered_iou(left: Detection, right: Detection, scale: float) -> float:
+    return _box_iou(_scaled_box(left, scale), _scaled_box(right, scale))
+
+
+def _scaled_box(detection: Detection, scale: float) -> Detection:
+    cx, cy = detection.center
+    width = max(detection.width, 1) * scale
+    height = max(detection.height, 1) * scale
+    return Detection(
+        round(cx - width / 2),
+        round(cy - height / 2),
+        round(cx + width / 2),
+        round(cy + height / 2),
+        detection.confidence,
+    )
+
+
+def _on_belt_ray(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
+    axis = _motion_axis(config)
+    cross = _cross_axis(config)
+    increasing = _direction_increasing(config.event.belt_direction)
+    origin = track.observed
+    along = _cross(detection.center, axis) - _cross(origin, axis)
+    glove = max(track.detection.height, track.detection.width, detection.height, detection.width, 1)
+    if increasing and along < -glove:
+        return False
+    if not increasing and along > glove:
+        return False
+    return abs(_cross(detection.center, cross) - _cross(origin, cross)) <= 1.5 * glove
 
 
 def _is_behind(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:

@@ -218,6 +218,37 @@ def test_lost_track_writes_a_terminal_reason():
     assert "lost_before_trigger" in reasons or "insufficient_confirmation" in reasons
 
 
+def test_same_lane_jump_does_not_birth_a_second_track():
+    config = _config()
+    config.event.max_track_distance_ratio = 0.12
+    config.event.validate()
+    accepted = _run(
+        [
+            [_box(100, 160, 0.9), _box(40, 160, 0.9)],
+            [_box(100, 110, 0.9), _box(40, 110, 0.9)],
+            [_box(100, 40, 0.9), _box(40, 40, 0.9)],
+        ],
+        config,
+    )
+    assert len(accepted) == 2
+
+
+def test_box_already_past_the_line_does_not_birth():
+    accepted = _run([[_box(100, 40, 0.9)], [_box(100, 20, 0.9)]])
+    assert accepted == []
+
+
+def test_border_box_is_not_the_crop():
+    accepted = _run([
+        [_box(10, 150, 0.99)],
+        [_box(100, 130, 0.70)],
+        [_box(100, 40, 0.70)],
+    ])
+    assert len(accepted) == 1
+    assert accepted[0].detection is not None
+    assert accepted[0].detection.center[0] == 100
+
+
 def test_best_pre_cross_frame_is_selected():
     accepted = _run([
         [_box(100, 150, 0.50)],

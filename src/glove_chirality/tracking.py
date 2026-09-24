@@ -99,7 +99,9 @@ class PassageTracker:
             matched = {id(track) for track, _detection in pairs}
             unmatched = [track for track in self._passages if id(track) not in matched]
         for track, detection in pairs:
-            self._update_track(track, detection, timestamp_s, frame, frame_index, width, height, weak=False)
+            self._update_track(
+                track, detection, timestamp_s, frame, frame_index, width, height, weak=False, siblings=strong
+            )
         if self.config.event.low_conf_recovery and weak and unmatched:
             rescued, unmatched, _ignored = _associate(
                 unmatched, weak, width, height, self.config, relaxed=True
@@ -120,9 +122,17 @@ class PassageTracker:
                 unmatched, partials, width, height, self.config, relaxed=True
             )
             for track, detection in rescued:
-                self._update_track(track, detection, timestamp_s, frame, frame_index, width, height, weak=True)
+                self._update_track(
+                    track, detection, timestamp_s, frame, frame_index, width, height, weak=True, siblings=strong
+                )
+        absorbed, unmatched_strong = self._absorb_same_lane(
+            unmatched, unmatched_strong, timestamp_s, frame, frame_index, width, height, siblings=strong
+        )
+        del absorbed
         for detection in unmatched_strong:
             if detection.confidence < self.config.event.new_track_conf:
+                continue
+            if not self._eligible_birth(detection, width, height):
                 continue
             self._birth(detection, timestamp_s, frame, frame_index)
         self._retire(timestamp_s, width, height)
@@ -155,6 +165,7 @@ class PassageTracker:
         height: int,
         *,
         weak: bool,
+        siblings: list[Detection] | None = None,
     ) -> None:
         prev_x, prev_y, prev_t = track.observed
         cx, cy = (float(detection.center[0]), float(detection.center[1]))
@@ -176,12 +187,13 @@ class PassageTracker:
         track.strong_hits += 1
         self._advance_trigger(track, prev_x, prev_y, prev_t, cx, cy, timestamp_s, width, height)
         pixels = frame[detection.y1:detection.y2, detection.x1:detection.x2].copy()
-        if pixels.size:
+        siblings = [item for item in (siblings or []) if item is not detection]
+        if pixels.size and not _crop_rejected(detection, siblings, width, height):
             track.candidates.append(_Candidate(
                 detection,
                 pixels,
                 timestamp_s,
-                _quality(pixels, detection.confidence),
+                _quality(pixels, detection, siblings, width, height),
                 frame_index,
             ))
             track.candidates = sorted(track.candidates, key=lambda item: item.quality, reverse=True)[:5]
@@ -238,9 +250,14 @@ class PassageTracker:
         )
         self._next_passage_id += 1
         pixels = frame[detection.y1:detection.y2, detection.x1:detection.x2].copy()
-        if pixels.size:
+        width, height = frame.shape[1], frame.shape[0]
+        if pixels.size and not _crop_rejected(detection, [], width, height):
             track.candidates.append(_Candidate(
-                detection, pixels, timestamp_s, _quality(pixels, detection.confidence), frame_index
+                detection,
+                pixels,
+                timestamp_s,
+                _quality(pixels, detection, [], width, height),
+                frame_index,
             ))
         axis, line = trigger_line_position(self.config, frame.shape[1], frame.shape[0])
         hysteresis = _hysteresis(self.config, frame.shape[1], frame.shape[0], axis)
@@ -248,6 +265,31 @@ class PassageTracker:
         current = cy if axis == "y" else cx
         track.armed = _upstream(current, line, hysteresis, increasing)
         self._passages.append(track)
+
+    def _absorb_same_lane(self, tracks, detections, timestamp_s, frame, frame_index, width, height, siblings):
+        if not tracks or not detections:
+            return [], list(detections)
+        pairs, _left, remaining = _associate(
+            tracks, detections, width, height, self.config, relaxed=True, lane_only=True
+        )
+        for track, detection in pairs:
+            self._update_track(
+                track, detection, timestamp_s, frame, frame_index, width, height, weak=False, siblings=siblings
+            )
+        return pairs, remaining
+
+    def _eligible_birth(self, detection: Detection, width: int, height: int) -> bool:
+        axis, line = trigger_line_position(self.config, width, height)
+        hysteresis = _hysteresis(self.config, width, height, axis)
+        increasing = _direction_increasing(self.config.event.belt_direction)
+        current = detection.center[1] if axis == "y" else detection.center[0]
+        if not _upstream(current, line, hysteresis, increasing):
+            return False
+        return not any(
+            _same_lane(track, detection, self.config) and _along_gap(track, detection, self.config) <= _wide_gate(self.config, width, height)
+            for track in self._passages
+            if not track.event_emitted
+        )
 
     def _near_existing(self, detection: Detection, width: int, height: int) -> bool:
         return any(
@@ -477,11 +519,14 @@ def _still_apart(tracks: list[_Passage], config: ExtractionConfig) -> bool:
     return max(points) - min(points) >= 0.45 * max(width, 1)
 
 
-def _associate(tracks, detections, width, height, config: ExtractionConfig, *, relaxed: bool):
+def _associate(tracks, detections, width, height, config: ExtractionConfig, *, relaxed: bool, lane_only: bool = False):
     if not tracks or not detections:
         return [], list(tracks), list(detections)
     costs = [
-        [_pair_cost(track, detection, width, height, config, relaxed=relaxed) for detection in detections]
+        [
+            _pair_cost(track, detection, width, height, config, relaxed=relaxed, lane_only=lane_only)
+            for detection in detections
+        ]
         for track in tracks
     ]
     pairs = _assign(costs)
@@ -494,9 +539,11 @@ def _associate(tracks, detections, width, height, config: ExtractionConfig, *, r
     )
 
 
-def _pair_cost(track: _Passage, detection: Detection, width: int, height: int, config: ExtractionConfig, *, relaxed: bool) -> float:
+def _pair_cost(track: _Passage, detection: Detection, width: int, height: int, config: ExtractionConfig, *, relaxed: bool, lane_only: bool = False) -> float:
+    if lane_only and not _same_lane(track, detection, config):
+        return float("inf")
     diagonal = max(1.0, float(np.hypot(width, height)))
-    gate = config.event.max_track_distance_ratio * diagonal * (1.35 if relaxed else 1.0)
+    gate = _wide_gate(config, width, height) if lane_only else config.event.max_track_distance_ratio * diagonal * (1.35 if relaxed else 1.0)
     distance = float(np.hypot(detection.center[0] - track.predicted[0], detection.center[1] - track.predicted[1]))
     if distance > gate:
         return float("inf")
@@ -558,10 +605,39 @@ def _downstream(coord: float, line: float, hysteresis: float, increasing: bool) 
     return coord >= line + hysteresis if increasing else coord <= line - hysteresis
 
 
-def _quality(pixels: np.ndarray, confidence: float) -> float:
+def _same_lane(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
+    axis = _cross_axis(config)
+    gap = abs(_cross(detection.center, axis) - _cross(track.predicted, axis))
+    return gap <= 0.75 * max(detection.width, track.detection.width, 1)
+
+
+def _along_gap(track: _Passage, detection: Detection, config: ExtractionConfig) -> float:
+    axis = _motion_axis(config)
+    return abs(_cross(detection.center, axis) - _cross(track.predicted, axis))
+
+
+def _wide_gate(config: ExtractionConfig, width: int, height: int) -> float:
+    diagonal = max(1.0, float(np.hypot(width, height)))
+    return 2.5 * config.event.max_track_distance_ratio * diagonal
+
+
+def _crop_rejected(detection: Detection, siblings: list[Detection], width: int, height: int) -> bool:
+    margin = 2
+    if detection.x1 <= margin or detection.y1 <= margin:
+        return True
+    if detection.x2 >= width - margin or detection.y2 >= height - margin:
+        return True
+    return any(_box_iou(detection, other) > 0.35 for other in siblings)
+
+
+def _quality(pixels: np.ndarray, detection: Detection, siblings: list[Detection], width: int, height: int) -> float:
     gray = cv2.cvtColor(pixels, cv2.COLOR_BGR2GRAY)
     sharp = min(1.0, float(cv2.Laplacian(gray, cv2.CV_64F).var()) / 500.0)
-    return 0.65 * confidence + 0.35 * sharp
+    cx, cy = detection.center
+    clearance = min(cx, cy, width - cx, height - cy) / max(min(width, height), 1)
+    edge = min(1.0, clearance / 0.12)
+    overlap = max((_box_iou(detection, other) for other in siblings), default=0.0)
+    return 0.25 * detection.confidence + 0.15 * sharp + 0.30 * edge + 0.30 * (1.0 - overlap)
 
 
 def _select_candidate(track: _Passage) -> _Candidate | None:

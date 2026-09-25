@@ -53,7 +53,7 @@ def test_factory_css_contains_full_frame_not_cover():
 def test_factory_yaml_uses_grip_geometry_without_absolute_paths():
     config = ExtractionConfig.from_yaml("configs/factory.yaml")
     assert config.detector.roi == (0.12, 0.03, 0.98, 0.995)
-    assert config.detector.trigger_zone == (0.15, 0.10, 0.97, 0.96)
+    assert config.detector.trigger_zone == (0.39, 0.04, 0.92, 0.93)
     assert config.event.belt_direction == "bottom_to_top"
     assert config.detector.yolo_imgsz == 640
     assert config.event.output_size == 256

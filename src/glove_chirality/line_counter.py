@@ -19,7 +19,6 @@ from glove_chirality.events import (
     _direction_increasing,
     create_event_crop,
     directional_crossing_alpha,
-    drop_detached_fragments,
     keep_selected_mask,
     suppress_other_gloves,
     trigger_line_position,
@@ -214,7 +213,6 @@ class LineCounter:
             detection,
             self.config.event.letterbox_fill,
         )
-        pixels = drop_detached_fragments(pixels, self.config.event.letterbox_fill)
         gray = cv2.cvtColor(pixels, cv2.COLOR_BGR2GRAY)
         sharp = min(1.0, float(cv2.Laplacian(gray, cv2.CV_64F).var()) / 500.0)
         sighting.shots.append(_Shot(detection, pixels, 0.7 * detection.confidence + 0.3 * sharp, frame_index))

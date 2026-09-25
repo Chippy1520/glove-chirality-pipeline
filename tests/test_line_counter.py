@@ -3,7 +3,6 @@ import numpy as np
 from glove_chirality.config import ExtractionConfig
 from glove_chirality.events import (
     PassageProcessor,
-    drop_detached_fragments,
     keep_selected_mask,
     suppress_other_gloves,
 )
@@ -48,15 +47,6 @@ def _run(frames):
         outcomes.extend(processor.process(image, index, index * 0.1).outcomes)
     outcomes.extend(processor.close((len(frames) - 1) * 0.1))
     return outcomes
-
-
-def test_a_detached_piece_is_removed_without_using_color():
-    crop = np.full((40, 40, 3), 114, dtype=np.uint8)
-    crop[12:36, 4:36] = (30, 80, 200)
-    crop[1:4, 8:22] = (30, 80, 200)
-    cleaned = drop_detached_fragments(crop, 114)
-    assert tuple(cleaned[2, 12]) == (114, 114, 114)
-    assert tuple(cleaned[20, 20]) == (30, 80, 200)
 
 
 def test_pixels_outside_the_selected_mask_are_removed_for_any_color():

@@ -266,32 +266,7 @@ def keep_selected_mask(
         return crop
     keep = np.zeros(crop.shape[:2], dtype=np.uint8)
     _paint(keep, target, origin[0], origin[1])
-    opened = cv2.morphologyEx(keep, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(opened, 8)
-    if count >= 3:
-        main = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        opened = np.where(labels == main, 255, 0).astype(np.uint8)
-        opened = cv2.dilate(opened, np.ones((3, 3), np.uint8), iterations=2)
-        opened[keep == 0] = 0
-        keep = opened
     crop[keep == 0] = fill
-    return drop_detached_fragments(crop, fill)
-
-
-def drop_detached_fragments(crop: np.ndarray, fill: int) -> np.ndarray:
-    """Remove a small piece that is not connected to the glove. Color is not used."""
-    if crop.size == 0:
-        return crop
-    foreground = np.any(crop != fill, axis=2).astype(np.uint8)
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(foreground, 8)
-    if count < 3:
-        return crop
-    main = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    main_area = max(1, int(stats[main, cv2.CC_STAT_AREA]))
-    for label in range(1, count):
-        if label == main or int(stats[label, cv2.CC_STAT_AREA]) > 0.12 * main_area:
-            continue
-        crop[labels == label] = fill
     return crop
 
 

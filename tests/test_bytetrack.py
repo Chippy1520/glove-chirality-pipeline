@@ -43,6 +43,26 @@ def _accepted(frames):
     return [item for item in outcomes if item.accepted]
 
 
+def test_hungarian_keeps_the_globally_better_pairing():
+    from glove_chirality.bytetrack import _hungarian
+
+    # Greedy highest-score takes (0, 0). The minimum total cost is the swap.
+    cost = np.array([[0.1, 0.2], [0.15, 4.0]])
+    assert set(_hungarian(cost)) == {(0, 1), (1, 0)}
+
+
+def test_fixed_gap_gloves_stay_two_tracks_without_box_overlap():
+    accepted = _accepted([
+        [_box(100, 170, size=24), _box(100, 120, size=24)],
+        [_box(100, 150, size=24), _box(100, 100, size=24)],
+        [_box(100, 130, size=24), _box(100, 80, size=24)],
+        [_box(100, 110, size=24), _box(100, 60, size=24)],
+        [_box(100, 90, size=24), _box(100, 40, size=24)],
+    ])
+    assert len(accepted) == 2
+    assert len({item.event_id for item in accepted}) == 2
+
+
 def test_separated_gloves_in_one_lane_stay_two_tracks():
     accepted = _accepted([
         [_box(100, 170, size=30), _box(100, 120, size=30)],

@@ -252,28 +252,21 @@ def suppress_other_gloves(
     else:
         foreign = cv2.dilate(foreign, np.ones((5, 5), np.uint8), iterations=1)
     crop[foreign > 0] = fill
-    return remove_stray_glove_fragments(crop, fill)
+    return crop
 
 
-def remove_stray_glove_fragments(crop: np.ndarray, fill: int) -> np.ndarray:
-    """Drop a small green piece that touches the crop edge and is not the glove."""
-    if crop.size == 0:
+def keep_selected_mask(
+    crop: np.ndarray,
+    origin: tuple[int, int],
+    target: Detection,
+    fill: int,
+) -> np.ndarray:
+    """Keep only the selected instance. Color is not used."""
+    if crop.size == 0 or not target.polygon:
         return crop
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    green = cv2.inRange(hsv, (35, 40, 40), (95, 255, 255))
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(green, 8)
-    if count < 3:
-        return crop
-    main = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    main_area = max(1, int(stats[main, cv2.CC_STAT_AREA]))
-    edge = np.zeros(green.shape, dtype=bool)
-    edge[0, :] = edge[-1, :] = edge[:, 0] = edge[:, -1] = True
-    for label in range(1, count):
-        if label == main or int(stats[label, cv2.CC_STAT_AREA]) > 0.1 * main_area:
-            continue
-        component = labels == label
-        if np.any(component & edge):
-            crop[component] = fill
+    keep = np.zeros(crop.shape[:2], dtype=np.uint8)
+    _paint(keep, target, origin[0], origin[1])
+    crop[keep == 0] = fill
     return crop
 
 

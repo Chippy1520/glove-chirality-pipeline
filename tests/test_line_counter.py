@@ -3,7 +3,7 @@ import numpy as np
 from glove_chirality.config import ExtractionConfig
 from glove_chirality.events import (
     PassageProcessor,
-    remove_stray_glove_fragments,
+    keep_selected_mask,
     suppress_other_gloves,
 )
 from glove_chirality.types import Detection
@@ -49,13 +49,13 @@ def _run(frames):
     return outcomes
 
 
-def test_a_stray_fingertip_on_the_edge_is_removed():
-    crop = np.zeros((40, 40, 3), dtype=np.uint8)
-    crop[8:36, 4:36] = (0, 180, 0)
-    crop[0:4, 2:10] = (0, 180, 0)
-    cleaned = remove_stray_glove_fragments(crop, 114)
-    assert cleaned[1, 4, 1] == 114
-    assert cleaned[20, 20, 1] == 180
+def test_pixels_outside_the_selected_mask_are_removed_for_any_color():
+    crop = np.zeros((20, 20, 3), dtype=np.uint8)
+    crop[:, :] = (40, 40, 200)
+    target = Detection(0, 0, 20, 20, 0.9, polygon=((2, 2), (12, 2), (12, 18), (2, 18)))
+    cleaned = keep_selected_mask(crop, (0, 0), target, 114)
+    assert tuple(cleaned[8, 6]) == (40, 40, 200)
+    assert tuple(cleaned[8, 16]) == (114, 114, 114)
 
 
 def test_other_glove_is_painted_out_of_the_crop():

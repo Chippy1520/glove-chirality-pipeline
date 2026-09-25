@@ -66,6 +66,7 @@ class MotionByteTrack:
         self._width = 1
         self._height = 1
         self._lost: list[PassageOutcome] = []
+        self.debug_events: list[dict[str, object]] = []
 
     def close(self) -> list[PassageOutcome]:
         lost = [
@@ -125,6 +126,15 @@ class MotionByteTrack:
         along = detection.center[1] if axis == "y" else detection.center[0]
         increasing = _direction_increasing(self.config.event.belt_direction)
         track.armed = along <= line if increasing else along >= line
+        self.debug_events.append({
+            "kind": "birth",
+            "track_id": track.track_id,
+            "armed": track.armed,
+            "frame_index": frame_index,
+            "timestamp_s": timestamp_s,
+            "center": detection.center,
+            "area": detection.area,
+        })
         self._remember(track, detection, frame, frame_index, timestamp_s, [])
         self._tracks.append(track)
 
@@ -247,6 +257,15 @@ class MotionByteTrack:
         return outcomes
 
     def _terminal(self, track: _Track, reason: str) -> PassageOutcome:
+        self.debug_events.append({
+            "kind": "death",
+            "track_id": track.track_id,
+            "reason": reason,
+            "armed": track.armed,
+            "timestamp_s": track.last_seen_s,
+            "center": track.detection.center,
+            "hits": track.hits,
+        })
         return PassageOutcome(
             self._next_event_id(),
             self.source_video,

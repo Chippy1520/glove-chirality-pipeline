@@ -20,7 +20,7 @@ def _config() -> ExtractionConfig:
     return config
 
 
-def _box(cx: int, cy: int, confidence: float = 0.8, size: int = 20) -> Detection:
+def _box(cx: int, cy: int, confidence: float = 0.8, size: int = 80) -> Detection:
     half = size // 2
     return Detection(cx - half, cy - half, cx + half, cy + half, confidence)
 
@@ -75,8 +75,10 @@ def test_weak_detection_cannot_birth_a_passage():
 
 def test_two_separated_gloves_emit_two_crops():
     accepted = _run([
-        [_box(60, 140, 0.8), _box(140, 140, 0.8)],
-        [_box(60, 70, 0.8), _box(140, 70, 0.8)],
+        [_box(40, 150, 0.8, size=24), _box(160, 150, 0.8, size=24)],
+        [_box(40, 130, 0.8, size=24), _box(160, 130, 0.8, size=24)],
+        [_box(40, 110, 0.8, size=24), _box(160, 110, 0.8, size=24)],
+        [_box(40, 85, 0.8, size=24), _box(160, 85, 0.8, size=24)],
     ])
     assert len(accepted) == 2
     assert len({item.event_id for item in accepted}) == 2
@@ -155,6 +157,7 @@ def test_wrinkle_split_still_emits_one_crop():
     accepted = _run([
         [Detection(70, 145, 110, 175, 0.8), Detection(90, 145, 130, 175, 0.8)],
         [Detection(70, 125, 110, 155, 0.8), Detection(90, 125, 130, 155, 0.8)],
+        [Detection(70, 95, 130, 135, 0.8)],
         [Detection(70, 40, 130, 80, 0.8)],
     ], config)
     assert len(accepted) == 1
@@ -236,18 +239,15 @@ def test_one_frame_flicker_is_not_a_track():
     assert outcomes == []
 
 
-def test_a_jump_larger_than_any_distance_gate_stays_one_glove():
-    config = _config()
-    config.event.max_track_distance_ratio = 0.01
-    config.event.validate()
-    accepted = _run(
-        [
-            [_box(100, 170, 0.9)],
-            [_box(100, 30, 0.9)],
-        ],
-        config,
-    )
-    assert len(accepted) == 1
+def test_two_gloves_in_one_lane_stay_two_tracks():
+    accepted = _run([
+        [_box(100, 175, 0.9, size=24), _box(100, 120, 0.9, size=24)],
+        [_box(100, 155, 0.9, size=24), _box(100, 100, 0.9, size=24)],
+        [_box(100, 135, 0.9, size=24), _box(100, 75, 0.9, size=24)],
+        [_box(100, 110, 0.9, size=24), _box(100, 50, 0.9, size=24)],
+        [_box(100, 85, 0.9, size=24)],
+    ])
+    assert len(accepted) == 2
 
 
 def test_two_lanes_stay_two_gloves():
@@ -256,9 +256,10 @@ def test_two_lanes_stay_two_gloves():
     config.event.validate()
     accepted = _run(
         [
-            [_box(100, 160, 0.9), _box(40, 160, 0.9)],
-            [_box(100, 110, 0.9), _box(40, 110, 0.9)],
-            [_box(100, 40, 0.9), _box(40, 40, 0.9)],
+            [_box(40, 160, 0.9, size=24), _box(160, 160, 0.9, size=24)],
+            [_box(40, 140, 0.9, size=24), _box(160, 140, 0.9, size=24)],
+            [_box(40, 110, 0.9, size=24), _box(160, 110, 0.9, size=24)],
+            [_box(40, 70, 0.9, size=24), _box(160, 70, 0.9, size=24)],
         ],
         config,
     )

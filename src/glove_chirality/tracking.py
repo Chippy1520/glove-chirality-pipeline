@@ -61,6 +61,7 @@ class _Passage:
     crossing_px: tuple[float, float] | None = None
     first_along: float = 0.0
     separated: bool = False
+    peak_area: int = 0
     candidates: list[_Candidate] = field(default_factory=list)
 
 
@@ -193,10 +194,11 @@ class PassageTracker:
                 self._advance_trigger(track, prev_x, prev_y, prev_t, cx, cy, timestamp_s, width, height)
             return
         track.strong_hits += 1
+        track.peak_area = max(track.peak_area, detection.area)
         self._advance_trigger(track, prev_x, prev_y, prev_t, cx, cy, timestamp_s, width, height)
         pixels = frame[detection.y1:detection.y2, detection.x1:detection.x2].copy()
         siblings = [item for item in (siblings or []) if item is not detection]
-        if pixels.size and not _crop_rejected(detection, siblings, width, height):
+        if pixels.size and not _crop_rejected(detection, siblings, width, height, track.peak_area):
             track.candidates.append(_Candidate(
                 detection,
                 pixels,
@@ -335,12 +337,10 @@ class PassageTracker:
         current = detection.center[1] if axis == "y" else detection.center[0]
         if not _upstream(current, line, hysteresis, increasing):
             return False
-        for track in self._passages:
-            if track.event_emitted or not _same_lane(track, detection, self.config):
-                continue
-            if track.last_seen_s < timestamp_s or not _is_behind(track, detection, self.config):
-                return False
-        return True
+        return not any(
+            not track.event_emitted and _owns(track, detection, self.config)
+            for track in self._passages
+        )
 
     def _near_existing(self, detection: Detection, width: int, height: int) -> bool:
         return any(
@@ -519,6 +519,10 @@ class PassageTracker:
                 continue
             if abs(track.crossing_s - prior.crossing_s) > 0.75:
                 continue
+            started = abs(track.first_along - prior.first_along)
+            glove = max(track.detection.height, prior.detection.height, track.detection.width, prior.detection.width, 1)
+            if started > 1.5 * glove:
+                continue
             previous = prior.crossing_px[0] if axis == "y" else prior.crossing_px[1]
             if abs(current - previous) <= limit:
                 track.passage_id = prior.passage_id
@@ -642,12 +646,11 @@ def _downstream(coord: float, line: float, hysteresis: float, increasing: bool) 
 
 
 def _owns(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
-    """ByteTrack/OC-SORT match: buffered overlap, belt ray, or the same lane."""
-    if _same_lane(track, detection, config):
-        return True
-    if _buffered_iou(track.detection, detection, 2.0) > 0:
-        return True
-    return _on_belt_ray(track, detection, config)
+    """Same lane is required, not proof. A glove farther up the belt is a new one."""
+    overlapped = _box_iou(track.detection, detection) > 0
+    if not _same_lane(track, detection, config) and not overlapped:
+        return False
+    return _along_gap(track, detection, config) <= 1.5 * _glove_length(track.detection, detection, config) or overlapped
 
 
 def _continues(previous: Detection, detection: Detection, config: ExtractionConfig) -> bool:
@@ -677,18 +680,11 @@ def _scaled_box(detection: Detection, scale: float) -> Detection:
     )
 
 
-def _on_belt_ray(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
+def _glove_length(left: Detection, right: Detection, config: ExtractionConfig) -> float:
     axis = _motion_axis(config)
-    cross = _cross_axis(config)
-    increasing = _direction_increasing(config.event.belt_direction)
-    origin = track.observed
-    along = _cross(detection.center, axis) - _cross(origin, axis)
-    glove = max(track.detection.height, track.detection.width, detection.height, detection.width, 1)
-    if increasing and along < -glove:
-        return False
-    if not increasing and along > glove:
-        return False
-    return abs(_cross(detection.center, cross) - _cross(origin, cross)) <= 1.5 * glove
+    if axis == "y":
+        return float(max(left.height, right.height, 1))
+    return float(max(left.width, right.width, 1))
 
 
 def _is_behind(track: _Passage, detection: Detection, config: ExtractionConfig) -> bool:
@@ -717,13 +713,21 @@ def _along_gap(track: _Passage, detection: Detection, config: ExtractionConfig) 
     return abs(_cross(detection.center, axis) - _cross(track.predicted, axis))
 
 
-def _crop_rejected(detection: Detection, siblings: list[Detection], width: int, height: int) -> bool:
+def _crop_rejected(
+    detection: Detection,
+    siblings: list[Detection],
+    width: int,
+    height: int,
+    peak_area: int = 0,
+) -> bool:
     margin = 2
     if detection.x1 <= margin or detection.y1 <= margin:
         return True
     if detection.x2 >= width - margin or detection.y2 >= height - margin:
         return True
-    return any(_box_iou(detection, other) > 0.35 for other in siblings)
+    if any(_box_iou(detection, other) > 0.35 for other in siblings):
+        return True
+    return bool(peak_area) and detection.area < 0.55 * peak_area
 
 
 def _quality(pixels: np.ndarray, detection: Detection, siblings: list[Detection], width: int, height: int) -> float:

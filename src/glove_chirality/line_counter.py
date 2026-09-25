@@ -84,14 +84,14 @@ class LineCounter:
             if _inside(item, self.config, self._width, self._height)
             and item.confidence >= self.config.event.track_high_conf
         ]
-        used: set[int] = set()
+        pairs = self._assign(boxes, timestamp_s)
+        matched_ids = {id(detection) for _, detection in pairs}
+        for sighting, detection in pairs:
+            self._advance(sighting, detection, frame, frame_index, timestamp_s, boxes)
         for detection in boxes:
-            match = self._nearest(detection, timestamp_s, used)
-            if match is None:
-                self._birth(detection, frame, frame_index, timestamp_s)
+            if id(detection) in matched_ids:
                 continue
-            used.add(match.sighting_id)
-            self._advance(match, detection, frame, frame_index, timestamp_s, boxes)
+            self._birth(detection, frame, frame_index, timestamp_s)
         self._expire(timestamp_s)
         return self._emit(timestamp_s) + self._lost
 
@@ -124,27 +124,27 @@ class LineCounter:
         sighting.hits += 1
         self._remember(sighting, detection, frame, frame_index, boxes)
 
-    def _nearest(self, detection: Detection, timestamp_s: float, used: set[int]) -> _Sighting | None:
-        axis = "y" if self.config.event.belt_direction in {"bottom_to_top", "top_to_bottom"} else "x"
-        along = 1 if axis == "y" else 0
-        cross = 1 - along
-        best: _Sighting | None = None
-        best_cost = 1e9
+    def _assign(self, detections: list[Detection], timestamp_s: float) -> list[tuple[_Sighting, Detection]]:
+        scored: list[tuple[float, _Sighting, Detection]] = []
         for sighting in self._sightings:
-            if sighting.sighting_id in used:
-                continue
             if timestamp_s - sighting.last_seen_s > self.config.event.reentry_time_s:
                 continue
-            glove = max(sighting.detection.height, sighting.detection.width, detection.height, detection.width, 1)
-            along_error = abs(sighting.detection.center[along] - detection.center[along])
-            cross_error = abs(sighting.detection.center[cross] - detection.center[cross])
-            if along_error > 1.5 * glove or cross_error > 0.75 * glove:
+            for detection in detections:
+                overlap = _mask_overlap(sighting.detection, detection)
+                if overlap <= 0:
+                    continue
+                scored.append((overlap, sighting, detection))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        used_sightings: set[int] = set()
+        used_detections: set[int] = set()
+        pairs = []
+        for _overlap, sighting, detection in scored:
+            if sighting.sighting_id in used_sightings or id(detection) in used_detections:
                 continue
-            cost = along_error / glove + 0.5 * cross_error / glove
-            if cost < best_cost:
-                best = sighting
-                best_cost = cost
-        return best
+            used_sightings.add(sighting.sighting_id)
+            used_detections.add(id(detection))
+            pairs.append((sighting, detection))
+        return pairs
 
     def _latch(self, sighting, previous, current, previous_s, timestamp_s) -> None:
         if sighting.emitted or sighting.latched or not sighting.armed:
@@ -269,6 +269,37 @@ def _inside(detection: Detection, config: ExtractionConfig, width: int, height: 
     x1, y1, x2, y2 = config.detector.roi
     cx, cy = detection.center
     return x1 * width <= cx <= x2 * width and y1 * height <= cy <= y2 * height
+
+
+def _mask_overlap(left: Detection, right: Detection) -> float:
+    """Positive only when the glove shapes overlap, not merely their boxes."""
+    if left.polygon and right.polygon:
+        return _polygon_iou(left.polygon, right.polygon)
+    return _iou(left, right)
+
+
+def _polygon_iou(left: tuple, right: tuple) -> float:
+    xs = [point[0] for point in left + right]
+    ys = [point[1] for point in left + right]
+    x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+    width, height = x2 - x1, y2 - y1
+    if width <= 0 or height <= 0:
+        return 0.0
+    scale = 1.0 if width * height <= 80_000 else (80_000 / (width * height)) ** 0.5
+
+    def raster(polygon) -> np.ndarray:
+        points = np.array([[(x - x1) * scale, (y - y1) * scale] for x, y in polygon], dtype=np.int32)
+        mask = np.zeros((max(1, int(height * scale)), max(1, int(width * scale))), dtype=np.uint8)
+        if len(points) >= 3:
+            cv2.fillPoly(mask, [points], 1)
+        return mask
+
+    left_mask = raster(left)
+    right_mask = raster(right)
+    union = int(np.logical_or(left_mask, right_mask).sum())
+    if union == 0:
+        return 0.0
+    return float(np.logical_and(left_mask, right_mask).sum()) / union
 
 
 def _iou(left: Detection, right: Detection) -> float:

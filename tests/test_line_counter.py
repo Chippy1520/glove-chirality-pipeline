@@ -74,6 +74,28 @@ def test_trailing_boxes_do_not_count_again():
     assert not [item for item in outcomes if item.reject_reason == "born_past_line"]
 
 
+def test_close_gloves_with_separate_masks_stay_two():
+    def glove(cx, cy, top, bottom):
+        half = 30
+        return Detection(
+            cx - half,
+            cy - half,
+            cx + half,
+            cy + half,
+            0.9,
+            polygon=((cx - 20, top), (cx + 20, top), (cx + 20, bottom), (cx - 20, bottom)),
+        )
+
+    frames = []
+    for step in range(6):
+        frames.append([
+            glove(100, 160 - step * 12, 148 - step * 12, 172 - step * 12),
+            glove(100, 112 - step * 12, 96 - step * 12, 124 - step * 12),
+        ])
+    accepted = [item for item in _run(frames) if item.accepted]
+    assert len(accepted) == 2
+
+
 def test_crop_comes_from_the_line_not_the_entry():
     frames = [[_box(100, 170)], [_box(100, 150)], [_box(100, 130)], [_box(100, 110)], [_box(100, 90)]]
     accepted = [item for item in _run(frames) if item.accepted]

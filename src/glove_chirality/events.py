@@ -791,7 +791,9 @@ class PassageProcessor:
             self.config.event.tracker_mode == "bytetrack"
             and self.config.event.trigger_line_enabled
         ):
-            outcomes = self._motion_bytetrack().update(frame, detections, frame_index, timestamp_s)
+            outcomes = self._motion_bytetrack().update(
+                frame, detections, frame_index, timestamp_s, tracking_only=tracking_only
+            )
             event_latency = (time.perf_counter() - event_start) * 1000.0
             return FrameResult(tuple(outcomes), tuple(detections), detector_latency, event_latency)
         if (

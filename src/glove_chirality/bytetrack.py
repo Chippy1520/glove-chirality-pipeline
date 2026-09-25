@@ -85,10 +85,12 @@ class MotionByteTrack:
         timestamp_s: float,
         tracking_only: list[Detection] | None = None,
     ) -> list[PassageOutcome]:
-        del tracking_only
         self._height, self._width = frame.shape[:2]
         self._lost = []
         boxes = [item for item in detections if _inside(item, self.config, self._width, self._height)]
+        partials = [
+            item for item in (tracking_only or []) if _inside(item, self.config, self._width, self._height)
+        ]
         event = self.config.event
         high = [item for item in boxes if item.confidence >= event.track_high_conf]
         low = [
@@ -97,6 +99,7 @@ class MotionByteTrack:
             if event.low_conf_recovery and event.track_low_conf <= item.confidence < event.track_high_conf
         ]
         matched, used_tracks, used_high = _match(self._tracks, high, timestamp_s, self.config)
+        matched = _enforce_order(matched, self._tracks, self.config)
         if low:
             rest = [track for index, track in enumerate(self._tracks) if index not in used_tracks]
             extra, _, _ = _match(rest, low, timestamp_s, self.config)
@@ -106,12 +109,25 @@ class MotionByteTrack:
                 used_tracks.add(self._tracks.index(track))
         for index, detection in matched:
             self._advance(self._tracks[index], detection, frame, frame_index, timestamp_s, high)
+        if partials:
+            rest = [track for index, track in enumerate(self._tracks) if index not in used_tracks]
+            partial_pairs, _, _ = _match(rest, partials, timestamp_s, self.config)
+            for local_index, detection in partial_pairs:
+                self._advance_partial(rest[local_index], detection, timestamp_s)
         for detection in high:
             if id(detection) in used_high or detection.confidence < event.new_track_conf:
                 continue
             self._birth(detection, frame, frame_index, timestamp_s)
         self._drop_missing(timestamp_s)
         return self._emit(timestamp_s) + self._lost
+
+    def _advance_partial(self, track: _Track, detection: Detection, timestamp_s: float) -> None:
+        previous = track.detection.center
+        track.kalman.predict(max(1e-3, timestamp_s - track.last_seen_s))
+        track.kalman.update(*detection.center)
+        self._latch(track, previous, detection.center, track.last_seen_s, timestamp_s)
+        track.last_seen_s = timestamp_s
+        track.missing_since_s = None
 
     def _birth(self, detection: Detection, frame: np.ndarray, frame_index: int, timestamp_s: float) -> None:
         track = _Track(
@@ -211,9 +227,8 @@ class MotionByteTrack:
         alive = []
         limit = self.config.event.reentry_time_s
         for track in self._tracks:
-            if track.last_seen_s == timestamp_s or track.emitted:
-                if not track.emitted:
-                    alive.append(track)
+            if track.last_seen_s == timestamp_s:
+                alive.append(track)
                 continue
             if track.missing_since_s is None:
                 track.missing_since_s = timestamp_s
@@ -294,7 +309,7 @@ def _match(
     timestamp_s: float,
     config: ExtractionConfig,
 ) -> tuple[list[tuple[int, Detection]], set[int], set[int]]:
-    live = [(index, track) for index, track in enumerate(tracks) if not track.emitted]
+    live = [(index, track) for index, track in enumerate(tracks)]
     if not live or not detections:
         return [], set(), set()
     cost = np.full((len(live), len(detections)), _INF)
@@ -315,6 +330,31 @@ def _match(
         used_detections.add(id(detections[col]))
         pairs.append((index, detections[col]))
     return pairs, used_tracks, used_detections
+
+
+def _enforce_order(
+    pairs: list[tuple[int, Detection]],
+    tracks: list[_Track],
+    config: ExtractionConfig,
+) -> list[tuple[int, Detection]]:
+    if len(pairs) < 2:
+        return pairs
+    axis = "y" if config.event.belt_direction in {"bottom_to_top", "top_to_bottom"} else "x"
+    along = 1 if axis == "y" else 0
+    increasing = _direction_increasing(config.event.belt_direction)
+    ordered = sorted(pairs, key=lambda pair: tracks[pair[0]].detection.center[along], reverse=not increasing)
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(ordered) - 1):
+            (track_a, det_a), (track_b, det_b) = ordered[i], ordered[i + 1]
+            pos_a, pos_b = det_a.center[along], det_b.center[along]
+            inverted = pos_a > pos_b if increasing else pos_a < pos_b
+            if inverted:
+                ordered[i] = (track_a, det_b)
+                ordered[i + 1] = (track_b, det_a)
+                changed = True
+    return ordered
 
 
 def _assignment_cost(

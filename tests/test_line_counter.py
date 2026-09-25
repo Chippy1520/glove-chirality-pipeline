@@ -96,6 +96,21 @@ def test_close_gloves_with_separate_masks_stay_two():
     assert len(accepted) == 2
 
 
+def test_a_short_gap_with_the_same_mask_stays_one_track():
+    frames = [
+        [_box(100, 150)],
+        [_box(100, 135)],
+        [],
+        [],
+        [],
+        [],
+        [_box(100, 110)],
+        [_box(100, 90)],
+    ]
+    accepted = [item for item in _run(frames) if item.accepted]
+    assert len(accepted) == 1
+
+
 def test_crop_comes_from_the_line_not_the_entry():
     frames = [[_box(100, 170)], [_box(100, 150)], [_box(100, 130)], [_box(100, 110)], [_box(100, 90)]]
     accepted = [item for item in _run(frames) if item.accepted]

@@ -23,6 +23,8 @@ from glove_chirality.events import (
 )
 from glove_chirality.types import Detection
 
+_HOLD_S = 1.0
+
 
 @dataclass
 class _Shot:
@@ -127,7 +129,7 @@ class LineCounter:
     def _assign(self, detections: list[Detection], timestamp_s: float) -> list[tuple[_Sighting, Detection]]:
         scored: list[tuple[float, _Sighting, Detection]] = []
         for sighting in self._sightings:
-            if timestamp_s - sighting.last_seen_s > self.config.event.reentry_time_s:
+            if timestamp_s - sighting.last_seen_s > _HOLD_S:
                 continue
             for detection in detections:
                 overlap = _mask_overlap(sighting.detection, detection)
@@ -181,7 +183,7 @@ class LineCounter:
 
     def _expire(self, timestamp_s: float) -> None:
         alive = []
-        limit = self.config.event.reentry_time_s
+        limit = _HOLD_S
         for sighting in self._sightings:
             if timestamp_s - sighting.last_seen_s <= limit:
                 alive.append(sighting)

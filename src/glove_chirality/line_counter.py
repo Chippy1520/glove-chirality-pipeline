@@ -138,7 +138,7 @@ class LineCounter:
             glove = max(sighting.detection.height, sighting.detection.width, detection.height, detection.width, 1)
             along_error = abs(sighting.detection.center[along] - detection.center[along])
             cross_error = abs(sighting.detection.center[cross] - detection.center[cross])
-            if along_error > glove or cross_error > 0.75 * glove:
+            if along_error > 1.5 * glove or cross_error > 0.75 * glove:
                 continue
             cost = along_error / glove + 0.5 * cross_error / glove
             if cost < best_cost:

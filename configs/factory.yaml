@@ -4,7 +4,7 @@
 detector:
   backend: yolo
   roi: [0.12, 0.03, 0.98, 0.995]
-  trigger_zone: [0.15, 0.10, 0.97, 0.96]
+  trigger_zone: [0.39, 0.04, 0.92, 0.93]
   require_full_containment: true
   trigger_inner_margin_ratio: 0.0
   yolo_model: checkpoints/yolo26s-seg.pt

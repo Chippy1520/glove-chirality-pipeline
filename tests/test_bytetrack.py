@@ -76,6 +76,28 @@ def test_separated_gloves_in_one_lane_stay_two_tracks():
     assert len({item.event_id for item in accepted}) == 2
 
 
+def test_mask_overlap_matches_when_centers_are_far():
+    from glove_chirality.bytetrack import _assignment_cost
+
+    previous = Detection(0, 0, 20, 20, 0.9, polygon=((0, 0), (40, 0), (40, 20), (0, 20)))
+    detection = Detection(80, 0, 100, 20, 0.9, polygon=((20, 0), (40, 0), (40, 20), (20, 20)))
+    assert _assignment_cost((10, 10), previous, detection, _config()) < 1e5
+
+
+def test_upstream_track_that_never_crosses_is_lost_before_trigger():
+    processor = PassageProcessor(
+        _Script([[_box(100, 160)], [_box(100, 145)], []]),
+        _config(),
+        "belt.mp4",
+        "live",
+    )
+    image = np.zeros((200, 200, 3), dtype=np.uint8)
+    processor.process(image, 0, 0.0)
+    processor.process(image, 1, 0.1)
+    closed = processor.close(1.0)
+    assert [item.reject_reason for item in closed] == ["lost_before_trigger"]
+
+
 def test_one_glove_is_one_crop():
     accepted = _accepted([
         [_box(100, 150)],

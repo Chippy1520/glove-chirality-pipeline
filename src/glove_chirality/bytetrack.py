@@ -69,7 +69,7 @@ class MotionByteTrack:
 
     def close(self) -> list[PassageOutcome]:
         lost = [
-            self._terminal(track, "lost_before_trigger")
+            self._terminal(track, self._death_reason(track))
             for track in self._tracks
             if track.hits >= 2 and not track.emitted
         ]
@@ -134,6 +134,13 @@ class MotionByteTrack:
             return (0.0, 0.0)
         stacked = np.stack(speeds)
         return float(np.median(stacked[:, 0])), float(np.median(stacked[:, 1]))
+
+    def _death_reason(self, track: _Track) -> str:
+        if not track.armed:
+            return "born_past_line"
+        if track.latched and not track.shots:
+            return "crossed_without_crop"
+        return "lost_before_trigger"
 
     def _advance(
         self,
@@ -204,7 +211,7 @@ class MotionByteTrack:
                 alive.append(track)
                 continue
             if track.hits >= 2 and not track.emitted:
-                self._lost.append(self._terminal(track, "lost_before_trigger"))
+                self._lost.append(self._terminal(track, self._death_reason(track)))
         self._tracks = alive
 
     def _emit(self, timestamp_s: float) -> list[PassageOutcome]:
@@ -303,9 +310,14 @@ def _assignment_cost(
     glove = max(previous.height, previous.width, detection.height, detection.width, 1)
     along_error = abs(predicted[along] - detection.center[along])
     cross_error = abs(predicted[cross] - detection.center[cross])
-    if along_error > glove or cross_error > 0.75 * glove:
+    mask = _mask_iou(previous, detection)
+    near = along_error <= glove and cross_error <= 0.75 * glove
+    if not near and mask <= 0:
         return _INF
-    return along_error / glove + 0.5 * cross_error / glove
+    motion = along_error / glove + 0.5 * cross_error / glove
+    if mask <= 0:
+        return motion
+    return min(motion, 1.0 - mask)
 
 
 class _Kalman:
@@ -400,6 +412,35 @@ def _hungarian(cost: np.ndarray) -> list[tuple[int, int]]:
         if row_index < original.shape[0] and col_index < original.shape[1] and np.isfinite(original[row_index, col_index]):
             assigned.append((int(row_index), int(col_index)))
     return assigned
+
+
+def _mask_iou(left: Detection, right: Detection) -> float:
+    if not left.polygon or not right.polygon:
+        return 0.0
+    x1 = min(left.x1, right.x1)
+    y1 = min(left.y1, right.y1)
+    width = max(left.x2, right.x2) - x1
+    height = max(left.y2, right.y2) - y1
+    if width <= 0 or height <= 0:
+        return 0.0
+    scale = 1.0 if width * height <= 80_000 else (80_000 / (width * height)) ** 0.5
+
+    def raster(detection: Detection) -> np.ndarray:
+        points = np.array(
+            [[(x - x1) * scale, (y - y1) * scale] for x, y in detection.polygon],
+            dtype=np.int32,
+        )
+        mask = np.zeros((max(1, int(height * scale)), max(1, int(width * scale))), dtype=np.uint8)
+        if len(points) >= 3:
+            cv2.fillPoly(mask, [points], 1)
+        return mask
+
+    left_mask = raster(left)
+    right_mask = raster(right)
+    union = int(np.logical_or(left_mask, right_mask).sum())
+    if union == 0:
+        return 0.0
+    return float(np.logical_and(left_mask, right_mask).sum()) / union
 
 
 def _iou(left: Detection, right: Detection) -> float:

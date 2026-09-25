@@ -168,8 +168,8 @@ class EventConfig:
             )
         if not 0.0 <= self.trigger_line_fraction <= 1.0:
             raise ValueError("trigger_line_fraction must be in [0.0, 1.0]")
-        if self.tracker_mode not in {"legacy", "passage_v2"}:
-            raise ValueError("tracker_mode must be legacy or passage_v2")
+        if self.tracker_mode not in {"legacy", "passage_v2", "count", "bytetrack"}:
+            raise ValueError("tracker_mode must be legacy, passage_v2, count, or bytetrack")
         if self.crop_selector not in {"legacy", "best_frame"}:
             raise ValueError("crop_selector must be legacy or best_frame")
         if not 0.0 <= self.track_low_conf <= self.track_high_conf <= self.new_track_conf <= 1.0:

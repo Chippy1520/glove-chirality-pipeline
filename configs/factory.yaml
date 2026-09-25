@@ -36,7 +36,7 @@ event:
   trigger_line_enabled: true
   belt_direction: bottom_to_top
   trigger_line_fraction: 0.5
-  tracker_mode: passage_v2
+  tracker_mode: bytetrack
   crop_selector: best_frame
   low_conf_recovery: true
   track_low_conf: 0.15

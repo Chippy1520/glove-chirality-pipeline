@@ -341,6 +341,8 @@ class PassageProcessor:
         self._next_track_id = 1
         self._recent_emits: list[tuple[float, float, float]] = []
         self._passage_tracker = None
+        self._counter = None
+        self._byte_tracker = None
 
     def _event_id(self) -> str:
         self.sequence += 1
@@ -357,6 +359,30 @@ class PassageProcessor:
                 self._event_id,
             )
         return self._passage_tracker
+
+    def _glove_counter(self):
+        if self._counter is None:
+            from glove_chirality.counter import GloveCounter
+
+            self._counter = GloveCounter(
+                self.config,
+                self.source_video,
+                self.label,
+                self._event_id,
+            )
+        return self._counter
+
+    def _motion_bytetrack(self):
+        if self._byte_tracker is None:
+            from glove_chirality.bytetrack import MotionByteTrack
+
+            self._byte_tracker = MotionByteTrack(
+                self.config,
+                self.source_video,
+                self.label,
+                self._event_id,
+            )
+        return self._byte_tracker
 
     def _reset(self, timestamp_s: float, cooldown: bool = False) -> None:
         self.active = False
@@ -762,6 +788,20 @@ class PassageProcessor:
         self._frame_width = int(width)
         self._frame_height = int(height)
         if (
+            self.config.event.tracker_mode == "bytetrack"
+            and self.config.event.trigger_line_enabled
+        ):
+            outcomes = self._motion_bytetrack().update(frame, detections, frame_index, timestamp_s)
+            event_latency = (time.perf_counter() - event_start) * 1000.0
+            return FrameResult(tuple(outcomes), tuple(detections), detector_latency, event_latency)
+        if (
+            self.config.event.tracker_mode == "count"
+            and self.config.event.trigger_line_enabled
+        ):
+            outcomes = self._glove_counter().update(frame, detections, frame_index, timestamp_s)
+            event_latency = (time.perf_counter() - event_start) * 1000.0
+            return FrameResult(tuple(outcomes), tuple(detections), detector_latency, event_latency)
+        if (
             self.config.event.tracker_mode == "passage_v2"
             and self.config.event.trigger_line_enabled
         ):
@@ -894,6 +934,10 @@ class PassageProcessor:
             raise ValueError("passage timestamps must be nondecreasing")
         self.last_timestamp_s = timestamp_s
         if self.config.event.trigger_line_enabled:
+            if self.config.event.tracker_mode == "bytetrack" and self._byte_tracker is not None:
+                return tuple(self._byte_tracker.close())
+            if self.config.event.tracker_mode == "count" and self._counter is not None:
+                return tuple(self._counter.close())
             if self._passage_tracker is not None:
                 return tuple(self._passage_tracker.close())
             self._tracks.clear()

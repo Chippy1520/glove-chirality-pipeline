@@ -167,6 +167,8 @@ class LineCounter:
     def _remember(self, sighting, detection, frame, frame_index, boxes) -> None:
         if detection.x1 <= 2 or detection.y1 <= 2 or detection.x2 >= self._width - 2 or detection.y2 >= self._height - 2:
             return
+        if not self._near_line(detection):
+            return
         if any(other is not detection and _iou(detection, other) > 0.35 for other in boxes):
             return
         pixels = frame[detection.y1:detection.y2, detection.x1:detection.x2].copy()
@@ -193,7 +195,10 @@ class LineCounter:
         for sighting in self._sightings:
             if not sighting.latched or sighting.emitted or sighting.hits < 2 or not sighting.shots:
                 continue
-            shot = max(sighting.shots, key=lambda item: item.quality)
+            near = [shot for shot in sighting.shots if self._near_line(shot.detection)]
+            if not near:
+                continue
+            shot = min(near, key=lambda item: self._line_distance(item.detection))
             local = Detection(0, 0, shot.pixels.shape[1], shot.pixels.shape[0], shot.detection.confidence)
             outcomes.append(
                 PassageOutcome(
@@ -219,6 +224,15 @@ class LineCounter:
             )
             sighting.emitted = True
         return outcomes
+
+    def _line_distance(self, detection: Detection) -> float:
+        axis, line = trigger_line_position(self.config, self._width, self._height)
+        along = detection.center[1] if axis == "y" else detection.center[0]
+        return abs(along - line)
+
+    def _near_line(self, detection: Detection) -> bool:
+        glove = max(detection.height, detection.width, 1)
+        return self._line_distance(detection) <= 1.5 * glove
 
     def _death_reason(self, sighting: _Sighting) -> str:
         if not sighting.armed:

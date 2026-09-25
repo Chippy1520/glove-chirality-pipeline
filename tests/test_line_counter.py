@@ -72,3 +72,10 @@ def test_trailing_boxes_do_not_count_again():
     outcomes = _run(frames)
     assert len([item for item in outcomes if item.accepted]) == 1
     assert not [item for item in outcomes if item.reject_reason == "born_past_line"]
+
+
+def test_crop_comes_from_the_line_not_the_entry():
+    frames = [[_box(100, 170)], [_box(100, 150)], [_box(100, 130)], [_box(100, 110)], [_box(100, 90)]]
+    accepted = [item for item in _run(frames) if item.accepted]
+    assert len(accepted) == 1
+    assert accepted[0].frame_index >= 3

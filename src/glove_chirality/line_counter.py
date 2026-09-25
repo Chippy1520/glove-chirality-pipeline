@@ -47,6 +47,7 @@ class _Sighting:
     crossing_s: float | None = None
     crossing_px: tuple[float, float] | None = None
     shots: list[_Shot] = field(default_factory=list)
+    velocity: tuple[float, float] = (0.0, 0.0)
 
 
 class LineCounter:
@@ -63,6 +64,7 @@ class LineCounter:
         self._height = 1
         self._lost: list[PassageOutcome] = []
         self.debug_events: list[dict[str, object]] = []
+        self.min_mask_iou = 0.0
 
     def close(self) -> list[PassageOutcome]:
         lost = [self._terminal(item, self._death_reason(item)) for item in self._sightings if item.hits >= 2 and not item.emitted]
@@ -120,6 +122,11 @@ class LineCounter:
 
     def _advance(self, sighting, detection, frame, frame_index, timestamp_s, boxes) -> None:
         previous = sighting.detection.center
+        dt = max(1e-3, timestamp_s - sighting.last_seen_s)
+        sighting.velocity = (
+            (detection.center[0] - previous[0]) / dt,
+            (detection.center[1] - previous[1]) / dt,
+        )
         self._latch(sighting, previous, detection.center, sighting.last_seen_s, timestamp_s)
         sighting.detection = detection
         sighting.last_seen_s = timestamp_s
@@ -131,9 +138,10 @@ class LineCounter:
         for sighting in self._sightings:
             if timestamp_s - sighting.last_seen_s > _HOLD_S:
                 continue
+            predicted = self._shifted(sighting, timestamp_s)
             for detection in detections:
-                overlap = _mask_overlap(sighting.detection, detection)
-                if overlap <= 0:
+                overlap = _mask_overlap(predicted, detection)
+                if overlap <= self.min_mask_iou:
                     continue
                 scored.append((overlap, sighting, detection))
         scored.sort(key=lambda item: item[0], reverse=True)
@@ -147,6 +155,22 @@ class LineCounter:
             used_detections.add(id(detection))
             pairs.append((sighting, detection))
         return pairs
+
+    def _shifted(self, sighting: _Sighting, timestamp_s: float) -> Detection:
+        dt = max(0.0, timestamp_s - sighting.last_seen_s)
+        dx = sighting.velocity[0] * dt
+        dy = sighting.velocity[1] * dt
+        detection = sighting.detection
+        polygon = None if detection.polygon is None else tuple((x + dx, y + dy) for x, y in detection.polygon)
+        return Detection(
+            int(round(detection.x1 + dx)),
+            int(round(detection.y1 + dy)),
+            int(round(detection.x2 + dx)),
+            int(round(detection.y2 + dy)),
+            detection.confidence,
+            detection.class_id,
+            polygon,
+        )
 
     def _latch(self, sighting, previous, current, previous_s, timestamp_s) -> None:
         if sighting.emitted or sighting.latched or not sighting.armed:

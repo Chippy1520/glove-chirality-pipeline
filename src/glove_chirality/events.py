@@ -247,8 +247,33 @@ def suppress_other_gloves(
     if target.polygon:
         keep = np.zeros_like(foreign)
         _paint(keep, target, ox, oy)
+        foreign = cv2.dilate(foreign, np.ones((5, 5), np.uint8), iterations=1)
         foreign[keep > 0] = 0
+    else:
+        foreign = cv2.dilate(foreign, np.ones((5, 5), np.uint8), iterations=1)
     crop[foreign > 0] = fill
+    return remove_stray_glove_fragments(crop, fill)
+
+
+def remove_stray_glove_fragments(crop: np.ndarray, fill: int) -> np.ndarray:
+    """Drop a small green piece that touches the crop edge and is not the glove."""
+    if crop.size == 0:
+        return crop
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    green = cv2.inRange(hsv, (35, 40, 40), (95, 255, 255))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(green, 8)
+    if count < 3:
+        return crop
+    main = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    main_area = max(1, int(stats[main, cv2.CC_STAT_AREA]))
+    edge = np.zeros(green.shape, dtype=bool)
+    edge[0, :] = edge[-1, :] = edge[:, 0] = edge[:, -1] = True
+    for label in range(1, count):
+        if label == main or int(stats[label, cv2.CC_STAT_AREA]) > 0.1 * main_area:
+            continue
+        component = labels == label
+        if np.any(component & edge):
+            crop[component] = fill
     return crop
 
 

@@ -204,11 +204,14 @@ def create_event_crop(
     frame: np.ndarray,
     detection: Detection,
     config: ExtractionConfig,
+    others: list[Detection] | None = None,
 ) -> np.ndarray:
     """Create the canonical offline/live crop for one selected passage frame."""
     event = config.event
     x1, y1, x2, y2 = _crop_bounds(frame, detection, event.crop_padding, event.make_square)
     crop = frame[y1:y2, x1:x2].copy()
+    if others:
+        crop = suppress_other_gloves(crop, (x1, y1), detection, others, event.letterbox_fill)
     if event.crop_mode != "bbox":
         if detection.polygon is None:
             raise RuntimeError(f"crop_mode={event.crop_mode} requires a segmentation polygon")
@@ -223,6 +226,44 @@ def create_event_crop(
             source = background if background.size else crop.reshape(-1, crop.shape[2])
             crop[outside] = np.median(source, axis=0).astype(crop.dtype)
     return _letterbox(crop, event.output_size, event.letterbox_fill)
+
+
+def suppress_other_gloves(
+    crop: np.ndarray,
+    origin: tuple[int, int],
+    target: Detection,
+    others: list[Detection],
+    fill: int,
+) -> np.ndarray:
+    """Paint neighboring gloves out of a crop. Keep the selected glove."""
+    if crop.size == 0 or not others:
+        return crop
+    foreign = np.zeros(crop.shape[:2], dtype=np.uint8)
+    ox, oy = origin
+    for other in others:
+        if other is target:
+            continue
+        _paint(foreign, other, ox, oy)
+    if target.polygon:
+        keep = np.zeros_like(foreign)
+        _paint(keep, target, ox, oy)
+        foreign[keep > 0] = 0
+    crop[foreign > 0] = fill
+    return crop
+
+
+def _paint(mask: np.ndarray, detection: Detection, ox: int, oy: int) -> None:
+    if detection.polygon:
+        points = np.rint(np.asarray(detection.polygon) - (ox, oy)).astype(np.int32)
+        if len(points) >= 3:
+            cv2.fillPoly(mask, [points], 255)
+        return
+    x1 = max(0, detection.x1 - ox)
+    y1 = max(0, detection.y1 - oy)
+    x2 = min(mask.shape[1], detection.x2 - ox)
+    y2 = min(mask.shape[0], detection.y2 - oy)
+    if x2 > x1 and y2 > y1:
+        mask[y1:y2, x1:x2] = 255
 
 
 def _canonical_detection_key(detection: Detection) -> tuple[float, ...]:

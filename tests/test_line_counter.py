@@ -1,7 +1,7 @@
 import numpy as np
 
 from glove_chirality.config import ExtractionConfig
-from glove_chirality.events import PassageProcessor
+from glove_chirality.events import PassageProcessor, suppress_other_gloves
 from glove_chirality.types import Detection
 
 
@@ -43,6 +43,16 @@ def _run(frames):
         outcomes.extend(processor.process(image, index, index * 0.1).outcomes)
     outcomes.extend(processor.close((len(frames) - 1) * 0.1))
     return outcomes
+
+
+def test_other_glove_is_painted_out_of_the_crop():
+    crop = np.zeros((20, 20, 3), dtype=np.uint8)
+    crop[:, :] = (0, 180, 0)
+    target = Detection(0, 0, 20, 20, 0.9, polygon=((0, 0), (12, 0), (12, 20), (0, 20)))
+    other = Detection(10, 0, 20, 20, 0.9, polygon=((14, 0), (20, 0), (20, 20), (14, 20)))
+    cleaned = suppress_other_gloves(crop, (0, 0), target, [other], 114)
+    assert cleaned[10, 16, 1] == 114
+    assert cleaned[10, 4, 1] == 180
 
 
 def test_one_crossing_is_one_crop():

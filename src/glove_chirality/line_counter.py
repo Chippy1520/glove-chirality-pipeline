@@ -19,6 +19,7 @@ from glove_chirality.events import (
     _direction_increasing,
     create_event_crop,
     directional_crossing_alpha,
+    suppress_other_gloves,
     trigger_line_position,
 )
 from glove_chirality.types import Detection
@@ -163,10 +164,10 @@ class LineCounter:
         detection = sighting.detection
         polygon = None if detection.polygon is None else tuple((x + dx, y + dy) for x, y in detection.polygon)
         return Detection(
-            int(round(detection.x1 + dx)),
-            int(round(detection.y1 + dy)),
-            int(round(detection.x2 + dx)),
-            int(round(detection.y2 + dy)),
+            round(detection.x1 + dx),
+            round(detection.y1 + dy),
+            round(detection.x2 + dx),
+            round(detection.y2 + dy),
             detection.confidence,
             detection.class_id,
             polygon,
@@ -195,11 +196,16 @@ class LineCounter:
             return
         if not self._near_line(detection) or self._reaches_led(detection):
             return
-        if any(other is not detection and _iou(detection, other) > 0.35 for other in boxes):
-            return
         pixels = frame[detection.y1:detection.y2, detection.x1:detection.x2].copy()
         if not pixels.size:
             return
+        pixels = suppress_other_gloves(
+            pixels,
+            (detection.x1, detection.y1),
+            detection,
+            boxes,
+            self.config.event.letterbox_fill,
+        )
         gray = cv2.cvtColor(pixels, cv2.COLOR_BGR2GRAY)
         sharp = min(1.0, float(cv2.Laplacian(gray, cv2.CV_64F).var()) / 500.0)
         sighting.shots.append(_Shot(detection, pixels, 0.7 * detection.confidence + 0.3 * sharp, frame_index))

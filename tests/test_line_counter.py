@@ -111,6 +111,18 @@ def test_a_short_gap_with_the_same_mask_stays_one_track():
     assert len(accepted) == 1
 
 
+def test_a_bottom_led_frame_is_not_the_crop():
+    frames = [
+        [_box(100, 170, size=80)],
+        [_box(100, 140, size=40)],
+        [_box(100, 110, size=40)],
+        [_box(100, 90, size=40)],
+    ]
+    accepted = [item for item in _run(frames) if item.accepted]
+    assert len(accepted) == 1
+    assert accepted[0].frame_index >= 2
+
+
 def test_crop_comes_from_the_line_not_the_entry():
     frames = [[_box(100, 170)], [_box(100, 150)], [_box(100, 130)], [_box(100, 110)], [_box(100, 90)]]
     accepted = [item for item in _run(frames) if item.accepted]

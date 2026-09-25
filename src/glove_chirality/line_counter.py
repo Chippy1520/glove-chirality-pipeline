@@ -169,7 +169,7 @@ class LineCounter:
     def _remember(self, sighting, detection, frame, frame_index, boxes) -> None:
         if detection.x1 <= 2 or detection.y1 <= 2 or detection.x2 >= self._width - 2 or detection.y2 >= self._height - 2:
             return
-        if not self._near_line(detection):
+        if not self._near_line(detection) or self._reaches_led(detection):
             return
         if any(other is not detection and _iou(detection, other) > 0.35 for other in boxes):
             return
@@ -197,7 +197,7 @@ class LineCounter:
         for sighting in self._sightings:
             if not sighting.latched or sighting.emitted or sighting.hits < 2 or not sighting.shots:
                 continue
-            near = [shot for shot in sighting.shots if self._near_line(shot.detection)]
+            near = [shot for shot in sighting.shots if self._near_line(shot.detection) and not self._reaches_led(shot.detection)]
             if not near:
                 continue
             shot = min(near, key=lambda item: self._line_distance(item.detection))
@@ -233,8 +233,14 @@ class LineCounter:
         return abs(along - line)
 
     def _near_line(self, detection: Detection) -> bool:
-        glove = max(detection.height, detection.width, 1)
-        return self._line_distance(detection) <= 1.5 * glove
+        span = self._height if self._belt_axis() == "y" else self._width
+        return self._line_distance(detection) <= 0.12 * span
+
+    def _reaches_led(self, detection: Detection) -> bool:
+        return detection.y2 > self._height * 0.94 or detection.x1 < self._width * 0.05
+
+    def _belt_axis(self) -> str:
+        return "y" if self.config.event.belt_direction in {"bottom_to_top", "top_to_bottom"} else "x"
 
     def _death_reason(self, sighting: _Sighting) -> str:
         if not sighting.armed:

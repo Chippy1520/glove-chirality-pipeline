@@ -73,7 +73,7 @@ Load an existing YAML into the host editor, validate it against `ExtractionConfi
 
 The detector checkpoint and chirality-classifier checkpoint are separate:
 
-- **Layer 1:** the custom YOLO segmentation model detects a glove, supplies its mask, and drives passage tracking/cropping.
+- **Layer 1:** the custom YOLO segmentation model detects a glove, supplies its mask, and drives passage tracking/cropping. On the live path this stage must run at the camera rate. Classification, display, and disk must not stall it, or mask-overlap tracking breaks.
 - **Layer 2:** the classifier predicts left/right once for each accepted Layer-1 crop.
 
 To configure Layer 1 without hand-editing YAML:

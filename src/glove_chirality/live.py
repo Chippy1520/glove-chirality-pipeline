@@ -424,6 +424,9 @@ def run_live_inference(
             metrics_callback(_metrics_snapshot(metrics, rolling, started, capture))
 
     pipeline_stop = threading.Event()
+    # Two frames only. Tracking still runs in the consumer, so a slow preview
+    # can stall Layer 1. Association belongs on the detector thread; this queue
+    # should carry completed crops, not every frame. See docs/ARCHITECTURE.md.
     detect_queue: queue.Queue = queue.Queue(maxsize=2)
     detect_error: list[BaseException] = []
 

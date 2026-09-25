@@ -27,6 +27,22 @@ adapters around that same detector, gate, state machine, frame selector, and cro
 Live mode does not contain a simplified crop implementation and never classifies every
 frame.
 
+## Realtime stage rate
+
+Mask-overlap tracking needs the next detection before a glove slides off its last mask.
+Capture and Layer 1 therefore set the rate. Layer 2 must not.
+
+1. Capture keeps the newest frame and drops older ones. It never waits on a model.
+2. Layer 1 is one YOLO call plus mask-overlap association. It runs on the detector
+   thread and does not wait for classification, display, or disk.
+3. The only handoff to Layer 2 is a completed passage whose crop is already built.
+   A late left/right result must not slow the next frame.
+
+`stage_pipeline: true` starts this split. The detector queue is still two frames deep,
+and the thread that drains it also runs tracking and the frame callback. A slow preview
+can drop the frames the tracker needs. Live association has to move onto the detector
+thread so the queue between stages carries completed crops, not every frame.
+
 ## Package map
 
 | Path | Responsibility |

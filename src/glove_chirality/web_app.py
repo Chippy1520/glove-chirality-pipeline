@@ -16,13 +16,15 @@ from urllib.parse import urlsplit
 
 import cv2
 import yaml
-from flask import Flask, Response, abort, jsonify, render_template, request
+from flask import Flask, Response, abort, g, jsonify, render_template, request, send_file
+from werkzeug.exceptions import HTTPException
 
 from glove_chirality.comparison import COMPARISON_METRICS
 from glove_chirality.config import ExtractionConfig
 from glove_chirality.factory_live import FactoryLiveSession
 from glove_chirality.factory_routes import register_factory_routes, register_factory_viewer
 from glove_chirality.models import CLASSIFIER_CHOICES
+from glove_chirality.monitoring import gpu_telemetry
 from glove_chirality.ui_presets import (
     custom_yolo_segmentation_preset,
     tight_detection_crop_preset,
@@ -90,6 +92,7 @@ def create_app(
     lan_enabled: bool = False,
     lan_viewer_url: str | None = None,
     factory_session: FactoryLiveSession | None = None,
+    inference_session: FactoryLiveSession | None = None,
 ) -> Flask:
     """Create the loopback-only host controller application."""
     app = Flask(
@@ -102,13 +105,18 @@ def create_app(
         LAN_ENABLED=lan_enabled,
         LAN_VIEWER_URL=lan_viewer_url,
         FACTORY=factory_session or FactoryLiveSession(service.workdir),
+        INFERENCE=inference_session or FactoryLiveSession(service.workdir, hardware_allowed=False),
     )
+    admission_lock = threading.RLock()
 
     def local_request() -> bool:
         return _is_loopback(request.remote_addr)
 
     @app.after_request
     def security_headers(response):
+        if getattr(g, "pipeline_admission", False):
+            admission_lock.release()
+            g.pipeline_admission = False
         return _secure_response(response)
 
     @app.before_request
@@ -120,6 +128,23 @@ def create_app(
         origin = request.headers.get("Origin")
         if origin and not _is_loopback(urlsplit(origin).hostname):
             abort(403, description="Untrusted request origin")
+
+    @app.before_request
+    def pipeline_admission():
+        if request.method != "POST" or request.path not in {
+            "/api/run", "/api/jobs/preflight", "/api/factory/start", "/api/inference/start",
+            "/api/factory/preflight", "/api/inference/preflight",
+        }:
+            return
+        payload = _json_payload()
+        if request.path in {"/api/run", "/api/jobs/preflight"} and payload.get("action") == "tensorboard":
+            return
+        admission_lock.acquire()
+        g.pipeline_admission = True
+        active = service.snapshot(include_logs=False)["running"].get("pipeline", False)
+        active = active or any(app.config[key].running for key in ("FACTORY", "INFERENCE"))
+        if active:
+            abort(409, description="Another pipeline job is active. Stop it before starting or probing resources.")
 
     def host_only(view: Callable):
         @wraps(view)
@@ -134,6 +159,7 @@ def create_app(
     @app.errorhandler(401)
     @app.errorhandler(403)
     @app.errorhandler(404)
+    @app.errorhandler(409)
     def http_error(error):
         return jsonify(error=str(error.description)), error.code
 
@@ -151,6 +177,18 @@ def create_app(
             initial_can_edit=True,
         )
 
+    @app.errorhandler(RuntimeError)
+    def resource_error(error):
+        return jsonify(error=str(error), suggested_fix="Check the run log and selected resources, then retry."), 409
+
+    @app.errorhandler(Exception)
+    def unexpected_error(error):
+        if isinstance(error, HTTPException):
+            return jsonify(error=str(error.description)), error.code
+        app.logger.exception("Workstation request failed")
+        return jsonify(error=f"{type(error).__name__}: {error}",
+                       suggested_fix="Open the run log; correct the failed resource or settings and retry."), 500
+
     @app.get("/api/health")
     def health():
         return jsonify(status="ok")
@@ -158,7 +196,10 @@ def create_app(
     @app.get("/api/state")
     def state():
         snapshot = service.snapshot(include_logs=True)
+        snapshot.update(factory=app.config["FACTORY"].snapshot(reveal_paths=True),
+                        inference=app.config["INFERENCE"].snapshot(reveal_paths=True))
         snapshot.update(
+            gpu=gpu_telemetry(),
             can_edit=True,
             lan_enabled=bool(app.config["LAN_ENABLED"]),
             lan_viewer_url=app.config["LAN_VIEWER_URL"],
@@ -179,9 +220,80 @@ def create_app(
     def run_command():
         payload = _json_payload()
         action = str(payload.pop("action", "")).strip()
-        slot, command = build_web_command(action, payload)
-        job_id = service.start(slot, command, action=action)
-        return jsonify(job_id=job_id, slot=slot, status="started"), 202
+        if action == "tensorboard":
+            slot, command = build_web_command(action, payload)
+            job_id = service.start(slot, command, action=action)
+            status = "starting"
+        else:
+            slot = "pipeline"
+            job_id = service.start_workflow(action, payload)
+            status = "preflight"
+        return jsonify(job_id=job_id, slot=slot, status=status), 202
+
+    @app.post("/api/jobs/preflight")
+    @host_only
+    def job_preflight():
+        from glove_chirality.preflight import check_workflow
+
+        payload = _json_payload()
+        action = str(payload.pop("action", "")).strip()
+        return jsonify(check_workflow(action, payload, service.workdir))
+
+    def find_job(job_id):
+        try:
+            return service.get_job(job_id, reveal_paths=True), None
+        except KeyError:
+            for key in ("FACTORY", "INFERENCE"):
+                session = app.config[key]
+                job = session.snapshot(reveal_paths=True)
+                if job.get("job_id") == job_id:
+                    return job, session
+            abort(404, description="Job not found")
+
+    @app.get("/api/jobs/<job_id>")
+    @host_only
+    def job_detail(job_id):
+        job, _session = find_job(job_id)
+        return jsonify(job)
+
+    @app.post("/api/jobs/<job_id>/stop")
+    @host_only
+    def job_stop(job_id):
+        _job, session = find_job(job_id)
+        if session is not None:
+            session.stop()
+            return jsonify(stopped=True, job_id=job_id)
+        return jsonify(stopped=service.stop_job(job_id), job_id=job_id)
+
+    @app.get("/api/jobs/<job_id>/logs")
+    @host_only
+    def job_logs(job_id):
+        job, session = find_job(job_id)
+        logs = job.get("events", []) if session is not None else service.job_logs(job_id)
+        return jsonify(job_id=job_id, logs=logs)
+
+    @app.get("/api/jobs/<job_id>/artifacts")
+    @host_only
+    def job_artifacts(job_id):
+        job, session = find_job(job_id)
+        artifacts = job.get("artifacts", []) if session is not None else service.job_artifacts(job_id)
+        return jsonify(job_id=job_id, artifacts=artifacts)
+
+    @app.get("/api/jobs/<job_id>/artifacts/<int:artifact_id>")
+    @host_only
+    def job_artifact_file(job_id, artifact_id):
+        _job, session = find_job(job_id)
+        if session is not None:
+            abort(404, description="Use the session export endpoint")
+        artifacts = service.job_artifacts(job_id)
+        if artifact_id < 0 or artifact_id >= len(artifacts):
+            abort(404, description="Artifact not found")
+        artifact = artifacts[artifact_id]
+        path = service.resolve_path(artifact["path"] if isinstance(artifact, dict) else artifact)
+        if not path.is_file():
+            abort(404, description="Artifact file is missing")
+        image = path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+        return send_file(path, as_attachment=not image, download_name=path.name)
 
     @app.post("/api/stop/<slot>")
     @host_only
@@ -276,6 +388,7 @@ def create_app(
         return jsonify(path=str(path))
 
     register_factory_routes(app, app.config["FACTORY"], host_only)
+    register_factory_routes(app, app.config["INFERENCE"], host_only, prefix="/api/inference")
     return app
 
 
@@ -284,6 +397,7 @@ def create_viewer_app(
     *,
     lan_token: str,
     factory_session: FactoryLiveSession | None = None,
+    inference_session: FactoryLiveSession | None = None,
 ) -> Flask:
     """Create an authenticated LAN observer with no mutation routes."""
     if not lan_token:
@@ -293,6 +407,8 @@ def create_viewer_app(
         template_folder="web/templates",
         static_folder="web/static",
     )
+    factory = factory_session or FactoryLiveSession(service.workdir)
+    inference = inference_session or FactoryLiveSession(service.workdir, hardware_allowed=False)
 
     @app.after_request
     def security_headers(response):
@@ -334,7 +450,10 @@ def create_viewer_app(
     @app.get("/api/state")
     def state():
         snapshot = service.snapshot(include_logs=False)
+        snapshot.update(factory=factory.snapshot(reveal_paths=False),
+                        inference=inference.snapshot(reveal_paths=False))
         snapshot.update(
+            gpu=gpu_telemetry(),
             can_edit=False,
             lan_enabled=True,
             lan_viewer_url=None,
@@ -347,7 +466,8 @@ def create_viewer_app(
         metric = request.args.get("metric", "recall_right")
         return jsonify(metric=metric, runs=service.comparison(metric, reveal_paths=False))
 
-    register_factory_viewer(app, factory_session or FactoryLiveSession(service.workdir))
+    register_factory_viewer(app, factory)
+    register_factory_viewer(app, inference, prefix="/api/inference")
     return app
 
 
@@ -389,6 +509,7 @@ def main(argv: list[str] | None = None) -> None:
     token = args.token or (secrets.token_urlsafe(18) if args.lan else "")
     service = CommandService(args.workdir)
     factory = FactoryLiveSession(args.workdir)
+    inference = FactoryLiveSession(args.workdir, hardware_allowed=False)
     lan_address = ""
     lan_viewer_url = None
     if args.lan and not args.smoke_test:
@@ -402,9 +523,11 @@ def main(argv: list[str] | None = None) -> None:
         lan_enabled=args.lan,
         lan_viewer_url=lan_viewer_url,
         factory_session=factory,
+        inference_session=inference,
     )
     viewer_app = (
-        create_viewer_app(service, lan_token=token, factory_session=factory) if args.lan else None
+        create_viewer_app(service, lan_token=token, factory_session=factory, inference_session=inference)
+        if args.lan else None
     )
     if args.smoke_test:
         client = app.test_client()
@@ -449,6 +572,7 @@ def main(argv: list[str] | None = None) -> None:
             viewer_thread.join(timeout=2.0)
         service.shutdown()
         factory.stop()
+        inference.stop()
 
 
 if __name__ == "__main__":

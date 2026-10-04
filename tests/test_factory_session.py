@@ -1,4 +1,5 @@
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -67,9 +68,16 @@ def test_host_rejects_invalid_factory_start_without_launching(tmp_path):
     app = create_app(service, factory_session=FactoryLiveSession(tmp_path))
     app.config.update(TESTING=True)
     response = app.test_client().post("/api/factory/start", json={"mode": "armed"})
-    assert response.status_code == 400
-    assert "confirmation" in response.get_json()["error"]
+    assert response.status_code == 202
+    assert response.get_json()["job_id"]
+    deadline = time.monotonic() + 2
+    while app.config["FACTORY"].running and time.monotonic() < deadline:
+        time.sleep(0.01)
+    diagnostics = app.config["FACTORY"].snapshot(reveal_paths=True)
+    assert any(check["field"] == "confirm_armed" and check["status"] == "failed"
+               for check in diagnostics["checks"])
     assert app.config["FACTORY"].running is False
+    assert app.config["FACTORY"]._capture is None
 
 
 def test_factory_session_start_stop_frame_and_event(tmp_path):
@@ -83,6 +91,8 @@ def test_factory_session_start_stop_frame_and_event(tmp_path):
 
     def runner(*_args, **kwargs):
         kwargs["status_callback"]("RUNNING")
+        for stage in ("first_frame", "detector_inference", "classifier_warmup"):
+            kwargs["on_stage"](stage, "passed")
         kwargs["frame_callback"](frame, FrameResult((), (), 1.0, 0.2), 0.1)
         kwargs["event_callback"](
             {
@@ -127,7 +137,7 @@ def test_factory_session_start_stop_frame_and_event(tmp_path):
     )
     assert started.wait(2)
     status = session.snapshot(reveal_paths=True)
-    assert status["status"] == "RUNNING"
+    assert status["status"] == "running"
     assert status["latest"]["prediction"] == "right"
     assert status["latest"]["result"] == "REJECT"
     assert status["latest"]["actuator_command"] is None

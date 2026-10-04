@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -166,6 +167,7 @@ def extract_video_with_report(
     label: str = "unknown",
     config: ExtractionConfig | None = None,
     detector: GloveDetector | None = None,
+    progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> ExtractionRun:
     """Sequential offline adapter around the shared passage processor."""
     config = config or ExtractionConfig()
@@ -184,6 +186,22 @@ def extract_video_with_report(
     records: list[EventRecord] = []
     frame_index = -1
     timestamp_s = 0.0
+    candidates = 0
+    total_frames = max(0, int(capture.get(cv2.CAP_PROP_FRAME_COUNT)))
+
+    def report_progress(done: bool = False) -> None:
+        if progress_callback is None:
+            return
+        progress_callback({
+            "frames": frame_index + 1,
+            "total_frames": total_frames,
+            "candidates": candidates,
+            "accepted": len(events),
+            "rejected": sum(record.status != "accepted" for record in records),
+            "multiple": sum("multiple" in record.reject_reason for record in records),
+            "partial": sum(record.reject_reason.startswith("partial") for record in records),
+            "done": done,
+        })
 
     def store(outcome: PassageOutcome) -> None:
         event, record = _store_outcome(outcome, output_dir, detector.name, config)
@@ -200,10 +218,14 @@ def extract_video_with_report(
             timestamp_s = frame_index / fps
             run_detection = frame_index % config.runtime.detect_every_n_frames == 0
             result = processor.process(frame, frame_index, timestamp_s, run_detection)
+            candidates += len(result.detections)
             for outcome in result.outcomes:
                 store(outcome)
+            if frame_index % 100 == 0:
+                report_progress()
         for outcome in processor.close(timestamp_s):
             store(outcome)
+        report_progress(done=True)
     finally:
         capture.release()
     return ExtractionRun(events, records)

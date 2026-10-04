@@ -236,3 +236,32 @@ body[data-local="false"] .host-only { display: none !important; }
   html { scroll-behavior: auto; }
   * { transition: none !important; }
 }
+
+#global-status { position: fixed; top: 72px; left: 0; right: 0; z-index: 29; padding: 8px 18px; background: #e7eefc; color: #172033; border-bottom: 1px solid #b8c9ec; font-size: 12px; min-height: 34px; max-height: 64px; overflow: auto; overflow-wrap: anywhere; }
+#global-status.connection-lost { background: #b42318; color: white; font-weight: 700; }
+.shell { padding-top: 136px; }
+.sidebar { top: 136px; }
+.page-section { scroll-margin-top: 150px; }
+.alert-volume { width: 65px; }
+.invalid-field { outline: 3px solid #b42318 !important; background: #fff0ed !important; }
+#job-error { max-width: 760px; width: calc(100% - 28px); max-height: 85vh; overflow-y: auto; }
+#job-checks li { margin: 8px 0; overflow-wrap: anywhere; }
+#job-result pre, #dataset-summary, #visual-detail, #factory-startup-checks { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
+.artifact-preview { display: block; width: 100%; max-height: 640px; object-fit: contain; margin: 12px 0; background: #101828; }
+#visual-decision { font-size: clamp(18px, 3vw, 30px); margin: 12px 0; padding: 18px; font-weight: 700; }
+@media (max-width: 760px) {
+  #global-status { top: 64px; padding: 6px 10px; max-height: 64px; }
+  .shell { padding-top: 128px; }
+  .sidebar { top: auto; }
+  .page-section { scroll-margin-top: 140px; }
+  .topbar { gap: 5px; }
+  #enable-alerts { width: auto; padding: 6px; font-size: 11px; min-height: 40px; }
+  .alert-volume { width: 45px; }
+  .top-status { flex-wrap: nowrap; gap: 4px; }
+}
+@media (max-width: 400px) { .brand > span:last-child { display: none; } }
+.workstation-monitor { margin: 12px 18px; padding: 14px; border: 1px solid #b8c9ec; border-radius: 12px; }
+.telemetry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; }
+.telemetry-card { display: flex; flex-direction: column; gap: 6px; padding: 10px; background: #f1f5fc; border-radius: 8px; overflow-wrap: anywhere; }
+.telemetry-card span { font-size: 12px; }
+.dataset-summary { margin-bottom: 18px; }

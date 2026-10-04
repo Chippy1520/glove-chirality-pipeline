@@ -7,7 +7,11 @@
   <title>GRIP · Glove chirality workstation</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='factory.css') }}">
+  <script defer src="{{ url_for('static', filename='alerts.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='jobs.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='workstation.js') }}"></script>
   <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='inference.js') }}"></script>
   <script defer src="{{ url_for('static', filename='factory.js') }}"></script>
 </head>
 <body data-local="{{ 'true' if initial_can_edit else 'false' }}">
@@ -130,6 +134,7 @@
             <button class="button" type="button" data-config-preset="tight_crop">Use tight detection bbox</button>
           </div>
           <label class="field"><span>YAML settings</span><textarea id="config-editor" rows="28" spellcheck="false" aria-label="Extraction configuration YAML"></textarea></label>
+          <div class="form-actions"><button id="approve-geometry" class="button" type="button">Record geometry approval</button></div><p id="geometry-approval" class="field-help">Not approved. Inspect a generated calibration preview before recording approval; this is not production certification.</p>
         </article>
       </section>
 
@@ -160,6 +165,9 @@
             <div class="form-actions"><button class="button primary" type="submit">Start training</button><button class="button danger" type="button" data-stop="pipeline">Stop pipeline</button></div>
           </form>
           <p class="field-help">Anti-spurious augmentation intentionally varies appearance and lighting so the classifier is encouraged to rely more on glove geometry/chirality rather than session-specific color or illumination. It does not horizontally reflect images. It is an experiment to compare with standard augmentation, not a guaranteed improvement. Validation images stay unaugmented.</p>
+          <div class="form-actions"><button id="audit-dataset" class="button" type="button">Audit training dataset</button><button id="train-preflight" class="button" type="button">Check all training resources</button></div>
+          <label class="field"><span>Dataset audit report output</span><input id="audit-output" value="outputs/dataset_audit.json"></label>
+          <pre id="dataset-summary">Dataset summary unavailable · audit before training.</pre>
         </article>
       </section>
 
@@ -168,7 +176,7 @@
         <p class="field-help">Source: camera index, video, or OpenCV-compatible stream. The research live page does not arm an actuator. Checkpoint: saved Layer-2 weights; the selected architecture must match. Config: Layer-1 detection, ROI, trigger zone, timing, and the exact crop sent to Layer-2. Device: CUDA uses the NVIDIA GPU; CPU is for debugging; Auto selects CUDA when available. CUDA AMP: mixed precision on a compatible GPU. Recall-priority class: argmax picks the larger probability; a priority class and threshold can bias toward that class. Decision threshold: only used with a recall-priority class. Lowering the RIGHT threshold can reduce missed right gloves but increases false rejects.</p>
         <div class="two-column">
           <article class="panel"><div class="panel-heading"><div><h2>Video</h2></div></div><form class="action-form form-grid one" data-action="infer_video">
-            <label class="field"><span>Video</span><input name="video" required></label><label class="field"><span>Checkpoint</span><input name="checkpoint" required></label><label class="field"><span>Output CSV</span><input name="output" value="outputs/predictions.csv" required></label><label class="field"><span>Extraction config</span><input name="config" value="configs/default.yaml" required></label><label class="field"><span>Device</span><input name="device" value="auto"></label><label class="field"><span>Recall-priority class</span><select name="decision_class"><option>argmax</option><option>right</option><option>left</option></select></label><label class="field"><span>Decision threshold</span><input name="decision_threshold" type="number" value="0.5" min="0" max="1" step="0.01"></label><div class="form-actions"><button class="button primary" type="submit">Run video</button></div>
+            <label class="field"><span>Video</span><input name="video" required></label><label class="field"><span>Checkpoint</span><input name="checkpoint" required></label><label class="field"><span>Output directory</span><input name="output" value="outputs/video-test" required></label><label class="field"><span>Extraction config</span><input name="config" value="configs/default.yaml" required></label><label class="field"><span>Device</span><input name="device" value="auto"></label><label class="field"><span>Recall-priority class</span><select name="decision_class"><option>argmax</option><option>right</option><option>left</option></select></label><label class="field"><span>Decision threshold</span><input name="decision_threshold" type="number" value="0.5" min="0" max="1" step="0.01"></label><div class="form-actions"><button class="button primary" type="submit">Run video</button></div>
           </form></article>
           <article class="panel"><div class="panel-heading"><div><h2>Existing crops</h2></div></div><form class="action-form form-grid one" data-action="infer_images">
             <label class="field"><span>Image or directory</span><input name="input" required></label><label class="field"><span>Checkpoint</span><input name="checkpoint" required></label><label class="field"><span>Output CSV</span><input name="output" value="outputs/image_predictions.csv" required></label><label class="field"><span>Device</span><input name="device" value="auto"></label><label class="field"><span>Recall-priority class</span><select name="decision_class"><option>argmax</option><option>right</option><option>left</option></select></label><label class="field"><span>Decision threshold</span><input name="decision_threshold" type="number" value="0.5" min="0" max="1" step="0.01"></label><div class="form-actions"><button class="button primary" type="submit">Classify crops</button></div>

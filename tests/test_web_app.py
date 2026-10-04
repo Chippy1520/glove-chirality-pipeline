@@ -166,14 +166,14 @@ def test_lan_shell_hides_host_controls_before_javascript(viewer_app):
     assert '<body data-local="false">' in response.get_data(as_text=True)
 
 
-def test_host_run_route_uses_allowlisted_command_builder(app, service, monkeypatch):
+def test_host_run_route_dispatches_async_preflight_workflow(app, service, monkeypatch):
     captured = {}
 
-    def capture(slot, command, *, action=None):
-        captured.update(slot=slot, command=command, action=action)
+    def capture(action, payload):
+        captured.update(action=action, payload=payload)
         return "test-job-id"
 
-    monkeypatch.setattr(service, "start", capture)
+    monkeypatch.setattr(service, "start_workflow", capture)
     response = app.test_client().post(
         "/api/run",
         json={
@@ -187,10 +187,10 @@ def test_host_run_route_uses_allowlisted_command_builder(app, service, monkeypat
 
     assert response.status_code == 202
     assert response.get_json()["job_id"] == "test-job-id"
-    assert captured["slot"] == "pipeline"
+    assert response.get_json()["status"] == "preflight"
     assert captured["action"] == "extract_dataset"
-    assert "extract-dataset" in captured["command"]
-    assert "left-videos" in captured["command"]
+    assert captured["payload"]["left"] == "left-videos"
+    assert captured["payload"]["right"] == "right-videos"
 
 
 def test_unknown_web_action_is_rejected_without_starting_process(app, service, monkeypatch):

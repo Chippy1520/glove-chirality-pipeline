@@ -8,6 +8,11 @@ For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should 
 
 ## Browser workstation
 
+For the device pulling the repository to train and operate the factory,
+follow [`docs/TODAY_WORKSTATION.md`](docs/TODAY_WORKSTATION.md): target installation,
+resource validation, extraction/audit, training, recorded-video testing, SHADOW
+and attended ARMED acceptance. Development test outputs are not deployment inputs.
+
 Launch the responsive browser workstation after installation:
 
 ```bash

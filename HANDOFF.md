@@ -2,6 +2,21 @@
 
 This file lets another researcher or AI coding agent continue without access to the original conversation.
 
+## Workstation delivery to the training/factory device
+
+Read [`docs/TODAY_WORKSTATION.md`](docs/TODAY_WORKSTATION.md) before operating the
+upgraded GUI. Code is developed and software-tested separately; the device pulling
+the repository owns the real recordings, CUDA installation, camera, checkpoints
+and Arduino acceptance. Do not copy development `.venv` or generated fixtures.
+The repository includes the `count` tracker's `counter.py` dependency.
+Generic visual inference and recorded videos cannot actuate hardware. Startup
+remains SHADOW; arming is an explicit, attended action after readiness and serial
+checks. Host cancellation cannot recall firmware-delayed commands already sent.
+
+Frontend contract checks are reproducible with Node 22: `npm ci --ignore-scripts`
+then `npm run test:frontend`. Node is only needed for these developer tests, not
+to serve the Python workstation. Python CI includes CPU ML dependencies.
+
 ## Objective
 
 A fixed 1920×1080, 25 FPS camera observes industrial gloves of potentially any color moving through a green-belt lightbox. Source recordings are separated into left-only and right-only streams. The system must:

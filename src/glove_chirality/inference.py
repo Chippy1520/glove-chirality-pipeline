@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,8 @@ def decision_index(
 ) -> int:
     if len(classes) != len(probabilities) or not classes:
         raise ValueError("classes and probabilities must be non-empty and have equal length")
+    if any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in probabilities):
+        raise ValueError("Classifier probabilities must be finite and in [0.0, 1.0]")
     if not 0.0 <= decision_threshold <= 1.0:
         raise ValueError("decision_threshold must be in [0.0, 1.0]")
     if decision_class == "argmax":
@@ -52,7 +55,7 @@ class TorchClassifier:
             else ("cpu" if device == "auto" else device)
         )
         self.use_amp = amp and self.device.type == "cuda"
-        saved = torch.load(checkpoint, map_location=self.device, weights_only=False)
+        saved = torch.load(checkpoint, map_location=self.device, weights_only=True)
         expected_backend = model_backend(saved["model_name"])
         if saved.get("model_backend", expected_backend) != expected_backend:
             raise RuntimeError(
@@ -135,6 +138,7 @@ def infer_images(
     device: str = "auto",
     decision_class: str = "argmax",
     decision_threshold: float = 0.5,
+    progress_callback=None,
 ):
     source = Path(input_path)
     images = (
@@ -149,7 +153,7 @@ def infer_images(
         decision_threshold=decision_threshold,
     )
     rows = []
-    for image in images:
+    for index, image in enumerate(images, 1):
         label, confidence = classifier.predict(image)
         rows.append(
             {
@@ -158,6 +162,11 @@ def infer_images(
                 "confidence": f"{confidence:.6f}",
             }
         )
+        if progress_callback and (index == 1 or index % 25 == 0 or index == len(images)):
+            progress_callback({"stage": "Classifying crops", "progress": {
+                "images_completed": index, "images_total": len(images),
+                "prediction": label, "confidence": confidence,
+            }})
     output_csv = Path(output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     with output_csv.open("w", newline="", encoding="utf-8") as stream:

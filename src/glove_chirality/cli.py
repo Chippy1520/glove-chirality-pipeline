@@ -21,29 +21,47 @@ from glove_chirality.extraction import (
     write_manifest,
 )
 from glove_chirality.models import CLASSIFIER_CHOICES
+from glove_chirality.progress import emit_progress
 
 
 def _extract_sources(sources, output: Path, config: ExtractionConfig):
     all_events = []
     all_records = []
+    jobs = []
     for path, label in sources:
         videos = discover_videos(path)
         if not videos:
             raise ValueError(f"No supported videos found under {path}")
-        for index, video in enumerate(videos, 1):
-            print(f"[{label} {index}/{len(videos)}] {video}")
-            run = extract_video_with_report(video, output, label, config)
-            print(
-                f"  accepted passages: {len(run.events)}; "
-                f"audited outcomes: {len(run.records)}"
-            )
-            all_events.extend(run.events)
-            all_records.extend(run.records)
+        jobs.extend((video, label) for video in videos)
+    totals = {key: 0 for key in ("frames", "candidates", "accepted", "rejected", "multiple", "partial")}
+    for index, (video, label) in enumerate(jobs, 1):
+        print(f"[{label} {index}/{len(jobs)}] {video}", flush=True)
+        latest = {}
+
+        def on_progress(values, *, latest=latest, index=index, video=video):
+            latest.update(values)
+            emit_progress({"stage": "Extraction", "progress": {
+                **{key: totals[key] + int(values.get(key, 0)) for key in totals},
+                "videos_completed": index - 1 + int(bool(values.get("done"))),
+                "videos_total": len(jobs), "video": video.name,
+                "video_frames": values["frames"], "video_total_frames": values["total_frames"],
+            }})
+
+        run = extract_video_with_report(video, output, label, config, progress_callback=on_progress)
+        for key in totals:
+            totals[key] += int(latest.get(key, 0))
+        print(f"  accepted passages: {len(run.events)}; audited outcomes: {len(run.records)}", flush=True)
+        all_events.extend(run.events)
+        all_records.extend(run.records)
     rows = event_rows(all_events, output, config_hash(config))
     manifest = write_manifest(rows, output / "manifest.csv")
     report = write_event_report(event_report_rows(all_records), output / "event_report.csv")
     print(f"Wrote {len(rows)} accepted rows to {manifest}")
     print(f"Wrote {len(all_records)} accepted/rejected outcomes to {report}")
+    emit_progress({"stage": "Extraction complete", "progress": {
+        **totals, "videos_completed": len(jobs), "videos_total": len(jobs),
+        "manifest": str(manifest), "event_report": str(report),
+    }})
     return all_events
 
 
@@ -87,6 +105,12 @@ def build_parser():
     dataset.add_argument("--right", required=True, help="Right-only video or directory")
     dataset.add_argument("--output", required=True)
     dataset.add_argument("--config", default="configs/default.yaml")
+
+    audit = sub.add_parser("audit-dataset", help="Audit existing crops without changing the dataset")
+    audit.add_argument("--manifest", required=True)
+    audit.add_argument("--output", help="Report JSON file (defaults to dataset_report.json beside the manifest)")
+    audit.add_argument("--validation-fraction", type=float, default=0.2)
+    audit.add_argument("--seed", type=int, default=42)
 
     preview = sub.add_parser("preview", help="Render detector/ROI overlay on one video frame")
     preview.add_argument("--video", required=True)
@@ -219,7 +243,9 @@ def _infer_video(args) -> None:
 
     output = Path(args.output)
     config = ExtractionConfig.from_yaml(args.config)
-    run = extract_video_with_report(args.video, output, "unknown", config)
+    run = extract_video_with_report(args.video, output, "unknown", config,
+                                    progress_callback=lambda values: emit_progress({
+                                        "stage": "Extracting video", "progress": values}))
     write_manifest(event_rows(run.events, output, config_hash(config)), output / "manifest.csv")
     write_event_report(event_report_rows(run.records), output / "event_report.csv")
     classifier = TorchClassifier(
@@ -242,7 +268,7 @@ def _infer_video(args) -> None:
         ]
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
-        for event in run.events:
+        for index, event in enumerate(run.events, 1):
             prediction, confidence = classifier.predict(event.image_path)
             writer.writerow(
                 {
@@ -255,6 +281,10 @@ def _infer_video(args) -> None:
                     "confidence": f"{confidence:.6f}",
                 }
             )
+            emit_progress({"stage": "Classifying passages", "progress": {
+                "events_completed": index, "events_total": len(run.events),
+                "prediction": prediction, "confidence": confidence,
+            }})
     print(f"Wrote {len(run.events)} per-passage predictions to {prediction_path}")
 
 
@@ -297,6 +327,7 @@ def main(argv=None):
             learning_rate=args.learning_rate,
             head_only_epochs=args.head_only_epochs,
             backbone_learning_rate=args.backbone_learning_rate,
+            progress_callback=emit_progress,
             validation_fraction=args.validation_fraction,
             seed=args.seed,
             device_name=args.device,
@@ -310,6 +341,14 @@ def main(argv=None):
             tensorboard_logdir=args.tensorboard_logdir or None,
         )
         print(json.dumps(metrics, indent=2))
+    elif args.command == "audit-dataset":
+        from glove_chirality.dataset_audit import audit_dataset
+
+        report_path = Path(args.output) if args.output else Path(args.manifest).parent / "dataset_report.json"
+        report = audit_dataset(args.manifest, output=report_path,
+                               validation_fraction=args.validation_fraction, seed=args.seed)
+        print(json.dumps(report, indent=2))
+        emit_progress({"stage": "Dataset audit complete", "progress": {}, "result": report})
     elif args.command == "infer-images":
         from glove_chirality.inference import infer_images
 
@@ -320,6 +359,7 @@ def main(argv=None):
             device=args.device,
             decision_class=args.decision_class,
             decision_threshold=args.decision_threshold,
+            progress_callback=emit_progress,
         )
         print(f"Wrote {len(rows)} predictions to {args.output}")
     elif args.command == "explain":

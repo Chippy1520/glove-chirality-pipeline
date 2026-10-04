@@ -7,6 +7,8 @@
 
   <article class="panel host-only">
     <div class="factory-controls">
+      <label class="field"><span>Source type · restart required</span><select id="factory-source-type"><option value="camera">Camera</option><option value="video">Video file</option><option value="stream">Stream</option></select></label>
+      <p class="field-help">Camera/model/config/geometry changes require stopping the session. Decision policy, reject class, threshold and actuator delay are LIVE controls.</p>
       <label class="field"><span>Camera preset</span>
         <select id="factory-camera-preset">
           <option value="auto">Auto</option>
@@ -112,6 +114,7 @@
       <div class="form-actions">
         <button id="factory-connect" class="button" type="button">Connect</button>
         <button id="factory-disconnect" class="button" type="button">Disconnect</button>
+        <button id="factory-manual-trigger" class="button danger" type="button" disabled>Manual physical trigger (ARMED only)</button>
       </div>
       <div class="form-actions">
         <button id="factory-grip-geometry" class="button" type="button">Apply GRIP Current-Camera Geometry</button>
@@ -132,6 +135,8 @@
   </article>
 
   <p id="factory-stage" class="factory-stage">Idle</p>
+  <pre id="factory-startup-checks" class="host-only">Model startup checks unavailable</pre>
+  <div class="form-actions host-only"><button id="factory-playback-pause" class="button" type="button">Pause playback</button><label>Video playback speed<select id="factory-playback-speed"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select></label></div>
   <p id="factory-geometry-warning" class="notice warn" hidden></p>
   <div class="factory-layout">
     <article id="factory-camera-panel" class="panel">
@@ -146,6 +151,7 @@
     <article id="factory-decision" class="decision-card decision-waiting" aria-live="assertive">
       <p class="eyebrow">Live decision</p>
       <h2 id="factory-decision-label">WAITING</h2>
+      <p id="factory-decision-detail">Waiting for an accepted classified passage.</p>
     </article>
   </div>
 
@@ -156,13 +162,13 @@
   </details>
 
   <div class="metric-grid">
-    <article class="metric-card"><span>Accepted</span><strong id="count-accepted">0</strong></article>
-    <article class="metric-card"><span>LEFT / PASS</span><strong id="count-left">0</strong></article>
-    <article class="metric-card"><span>RIGHT / REJECT</span><strong id="count-right">0</strong></article>
-    <article class="metric-card"><span>Pipeline rejected</span><strong id="count-pipeline">0</strong></article>
-    <article class="metric-card"><span>Multiple</span><strong id="count-multiple">0</strong></article>
-    <article class="metric-card"><span>Partial</span><strong id="count-partial">0</strong></article>
-    <article class="metric-card"><span>Commands sent</span><strong id="count-commands">0</strong></article>
+    <article class="metric-card"><span>Accepted</span><strong id="count-accepted">—</strong></article>
+    <article class="metric-card"><span>LEFT / PASS</span><strong id="count-left">—</strong></article>
+    <article class="metric-card"><span>RIGHT / REJECT</span><strong id="count-right">—</strong></article>
+    <article class="metric-card"><span>Pipeline rejected</span><strong id="count-pipeline">—</strong></article>
+    <article class="metric-card"><span>Multiple</span><strong id="count-multiple">—</strong></article>
+    <article class="metric-card"><span>Partial</span><strong id="count-partial">—</strong></article>
+    <article class="metric-card"><span>Commands sent</span><strong id="count-commands">—</strong></article>
     <article class="metric-card"><span>Capture FPS</span><strong id="metric-capture-fps">—</strong></article>
     <article class="metric-card"><span>Processed FPS</span><strong id="metric-processed-fps">—</strong></article>
     <article class="metric-card"><span>YOLO ms</span><strong id="metric-yolo">—</strong></article>

@@ -4,31 +4,27 @@
   const token = sessionStorage.getItem("grip-lan-token") || "";
   const $ = (selector) => document.querySelector(selector);
   const seenRejects = new Set();
+  const eventRows = new Map();
+  const reportedFaults = new Set();
   let audioArmed = false;
+  let currentStatus = {}, sessionKey = '', audioBootstrapped = false;
   let lastCropEvent = "";
   let previewTimer = 0;
+  let decisionBusy = false, statusBusy = false;
 
   async function api(path, options = {}) {
     const headers = new Headers(options.headers || {});
     if (token) headers.set("X-GRIP-Token", token);
     if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    const response = await fetch(path, { ...options, headers });
+    const response = await fetch(path, { ...options, headers, signal: options.signal || AbortSignal.timeout(15000) }).catch(error => { error.factory = true; throw error; });
     const type = response.headers.get("content-type") || "";
     const payload = type.includes("json") ? await response.json().catch(() => ({})) : {};
-    if (!response.ok) throw new Error(payload.error || `${response.status} ${response.statusText}`);
+    if (!response.ok) { const error = new Error(payload.error || `${response.status} ${response.statusText}`); error.report = payload.preflight || payload; error.factory = true; throw error; }
     return payload;
   }
 
-  function beep() {
-    const context = new AudioContext();
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.frequency.value = 880;
-    gain.gain.value = 0.08;
-    oscillator.connect(gain).connect(context.destination);
-    oscillator.start();
-    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.22);
-    oscillator.stop(context.currentTime + 0.24);
+  function beep(key) {
+    window.GripAlerts.tone('reject', key);
   }
 
   function selectedValue(select, customInput) {
@@ -89,20 +85,25 @@
   }
 
   function render(status) {
+    currentStatus = status;
+    const nextSession = status.session_id || status.job_id || status.started_at || '';
+    if (sessionKey !== nextSession) { sessionKey = nextSession; lastCropEvent = ''; audioBootstrapped = false; }
     $("#factory-stage").textContent = status.fault ? `Fault: ${status.fault}` : (status.status || "idle");
     const running = Boolean(status.running);
-    ["factory-camera", "factory-checkpoint", "factory-config", "factory-device"].forEach((id) => {
+    const faultKey = `${status.job_id || status.session_id}:${status.fault || status.error}`;
+    if ((status.fault || ['failed','fault'].includes(status.status)) && !reportedFaults.has(faultKey)) { reportedFaults.add(faultKey); if (reportedFaults.size > 50) reportedFaults.delete(reportedFaults.values().next().value); window.GripJobs.fail(status.preflight || {checks:status.checks},$('#factory'),status.fault || status.error); }
+    ["factory-camera", "factory-source-type", "factory-custom-source", "factory-checkpoint", "factory-config", "factory-custom-config", "factory-custom-checkpoint", "factory-device", "factory-amp", "factory-camera-preset", "factory-camera-fps", "factory-camera-backend", "factory-camera-width", "factory-camera-height", "factory-camera-fourcc", "factory-grip-geometry", "factory-reset-geometry", "factory-belt-direction", "factory-trigger-enabled", "factory-trigger-fraction"].forEach((id) => {
       const element = document.getElementById(id);
       if (element) element.disabled = running;
     });
     const counters = status.counters || {};
-    $("#count-accepted").textContent = counters.total_accepted ?? 0;
-    $("#count-left").textContent = counters.left_pass ?? 0;
-    $("#count-right").textContent = counters.right_reject ?? 0;
-    $("#count-pipeline").textContent = counters.pipeline_rejected ?? 0;
-    $("#count-multiple").textContent = counters.multiple_candidates ?? 0;
-    $("#count-partial").textContent = counters.partial ?? 0;
-    $("#count-commands").textContent = counters.commands_sent ?? 0;
+    $("#count-accepted").textContent = counters.total_accepted ?? '—';
+    $("#count-left").textContent = counters.left_pass ?? '—';
+    $("#count-right").textContent = counters.right_reject ?? '—';
+    $("#count-pipeline").textContent = counters.pipeline_rejected ?? '—';
+    $("#count-multiple").textContent = counters.multiple_candidates ?? '—';
+    $("#count-partial").textContent = counters.partial ?? '—';
+    $("#count-commands").textContent = counters.commands_sent ?? '—';
     const metrics = status.metrics || {};
     const num = (value) => value == null || Number.isNaN(Number(value)) ? "—" : Number(value).toFixed(1);
     $("#metric-capture-fps").textContent = num(metrics.capture_fps);
@@ -113,6 +114,10 @@
     $("#metric-accepted-latency").textContent = num(metrics.accepted_latency_ms);
     $("#metric-dropped").textContent = metrics.dropped_frames ?? "—";
     const serial = status.serial || {};
+    $('#factory-startup-checks').textContent = window.GripJobs.checks(status.preflight || {checks:status.checks}).map(check => `${check.label || check.field}: ${check.status} · ${check.message || ''}`).join('\n') || 'Model startup checks unavailable';
+    $('#factory-manual-trigger').disabled = !(running && status.mode === 'armed' && serial.connected && status.hardware_allowed !== false);
+    $('#factory-preview').hidden = document.body.dataset.local !== 'true';
+    if (document.body.dataset.local !== 'true') $('#factory-crop').hidden = true;
     $("#factory-serial-status").textContent = serial.connected
       ? `Connected ${serial.port || ""} · last ${serial.last_command || "—"} · ACK ${serial.last_ack || "—"}`
       : `Disconnected${serial.fault ? ` · ${serial.fault}` : ""}`;
@@ -120,7 +125,7 @@
     const request = status.camera_request || {};
     const requested = request.width && request.height ? `${request.width}x${request.height}` : "auto";
     const actual = camera.width && camera.height ? `${camera.width}x${camera.height}` : "—";
-    $("#factory-capture-info").textContent = `Capture: ${actual} · Requested: ${requested} · FPS requested ${request.fps || "auto"} · actual ${camera.fps ?? "—"} · Backend: ${camera.backend || "—"} · FourCC: ${camera.fourcc || request.fourcc || "auto"} · Inference frame unchanged · Preview encode: ${status.preview_encode_ms == null ? "—" : Number(status.preview_encode_ms).toFixed(1)} ms · YOLO imgsz: ${status.yolo_imgsz || 640}`;
+    $("#factory-capture-info").textContent = `Capture: ${actual} · Requested: ${requested} · FPS requested ${request.fps || "auto"} · actual ${camera.fps ?? "unavailable"} · Backend: ${camera.backend || "unavailable"} · FourCC actual: ${camera.fourcc || "unavailable"} · Preview encode: ${status.preview_encode_ms == null ? "unavailable" : Number(status.preview_encode_ms).toFixed(1)} ms · YOLO imgsz: ${status.yolo_imgsz ?? "unavailable"}`;
     const warning = $("#factory-geometry-warning");
     if (status.geometry_warning) {
       warning.hidden = false;
@@ -138,7 +143,10 @@
     renderEvents(status.events || []);
     if (document.body.dataset.local === "true" && running) startPreview();
     else stopPreview();
+    renderAcceptedDecision(status);
+    (status.events || []).forEach(event => maybeBeep(event,status.reject_class || 'right'));
     maybeBeep(status.latest, status.reject_class || "right");
+    audioBootstrapped = true;
   }
 
   const decisionClass = {
@@ -154,9 +162,19 @@
     const card = $("#factory-decision");
     const label = $("#factory-decision-label");
     if (!card || !label) return;
+    if (['PASS','REJECT'].includes(decision?.phase) || currentStatus.latest?.status === 'accepted') return;
     const phase = decision && decision.phase ? decision.phase : "WAITING";
     label.textContent = phase;
     card.className = `decision-card ${decisionClass[phase] || "decision-waiting"}`;
+  }
+
+  function renderAcceptedDecision(status) {
+    const latest = status.latest;
+    if (latest?.status !== 'accepted' || !latest.prediction) return;
+    const reject = latest.prediction === (status.reject_class || 'right');
+    $('#factory-decision-label').textContent = `${latest.prediction.toUpperCase()} / ${reject ? 'REJECT' : 'PASS'}`;
+    $('#factory-decision').className = `decision-card ${reject ? 'decision-reject' : 'decision-pass'}`;
+    $('#factory-decision-detail').textContent = `Confidence ${latest.confidence ?? 'unavailable'} · threshold ${status.decision_threshold ?? status.threshold ?? 'unavailable'} · policy ${status.policy || status.decision_class || 'unavailable'} · mode ${status.mode || 'unavailable'} · actuator ${status.actuator_state || 'unavailable'} · ${latest.actuator_ack || latest.ack || latest.actuator_command || (latest.would_reject ? 'would reject (shadow)' : 'unavailable')}`;
   }
 
   function renderDiagnostics(latest, rejectClass) {
@@ -188,9 +206,9 @@
 
   function renderEvents(events) {
     const body = $("#factory-events");
-    body.replaceChildren();
     const rows = events.slice(-40).reverse();
     if (!rows.length) {
+      body.replaceChildren(); eventRows.clear();
       const row = body.insertRow();
       const cell = row.insertCell();
       cell.colSpan = 10;
@@ -198,8 +216,12 @@
       cell.textContent = "No passages yet.";
       return;
     }
+    if (!eventRows.size) body.replaceChildren();
     rows.forEach((event) => {
-      const row = body.insertRow();
+      const key = `${sessionKey}:${event.event_id}`;
+      let row = eventRows.get(key);
+      if (!row) { row = document.createElement('tr'); body.append(row); eventRows.set(key,row); }
+      row.replaceChildren();
       const position = event.center_px ? `X=${Number(event.center_px[0]).toFixed(0)},Y=${Number(event.center_px[1]).toFixed(0)}` : "—";
       [
         event.wall_time_iso || "—",
@@ -211,20 +233,26 @@
         position,
         event.trigger_crossing_wall_time_iso || "—",
         event.result || (event.status === "accepted" ? "—" : "pipeline"),
-        event.actuator_command || (event.would_reject ? "would reject" : "—"),
+        `${event.mode || currentStatus.mode || 'unavailable'} · ${event.actuator_command || (event.would_reject ? "would reject" : "no command")} · ACK ${event.actuator_ack || event.ack || 'unavailable'} · ${event.actuator_status || (event.pending ? 'pending' : 'state unavailable')}`,
       ].forEach((value) => {
         row.insertCell().textContent = value;
       });
     });
+    const keep = new Set(rows.map(event => `${sessionKey}:${event.event_id}`));
+    for (const [key,row] of eventRows) if (!keep.has(key)) { row.remove(); eventRows.delete(key); }
+    rows.forEach(event => body.append(eventRows.get(`${sessionKey}:${event.event_id}`)));
   }
 
   function maybeBeep(latest, rejectClass) {
-    if (!latest || !$("#factory-audio").checked || !audioArmed) return;
-    if (latest.status !== "accepted" || latest.prediction !== rejectClass) return;
-    if (seenRejects.has(latest.event_id)) return;
-    seenRejects.add(latest.event_id);
+    if (!latest?.event_id) return;
+    const key = `factory:${sessionKey}:${latest.event_id}`;
+    if (!audioBootstrapped) { seenRejects.add(key); window.GripAlerts.remember(key); return; }
+    if (seenRejects.has(key)) return;
+    seenRejects.add(key);
     if (seenRejects.size > 500) seenRejects.delete(seenRejects.values().next().value);
-    beep();
+    if ((document.body.dataset.local === 'true' && !$("#factory-audio").checked) || !audioArmed) return;
+    if (latest.status !== "accepted" || latest.prediction !== rejectClass) return;
+    beep(key);
   }
 
   function startPreview() {
@@ -268,6 +296,7 @@
         camera_fourcc: $("#factory-camera-fourcc").value,
         geometry: window.factoryGeometry || "yaml",
         source: selectedValue($("#factory-camera"), $("#factory-custom-source")),
+        source_type: $('#factory-source-type').value,
         checkpoint: selectedValue($("#factory-checkpoint"), $("#factory-custom-checkpoint")),
         config: selectedValue($("#factory-config"), $("#factory-custom-config")),
         device: $("#factory-device").value || "auto",
@@ -288,6 +317,24 @@
 
   function bind() {
     if (!$("#factory")) return;
+    window.addEventListener('unhandledrejection', event => { if (event.reason?.factory) { event.preventDefault(); window.GripJobs.fail(event.reason.report, $('#factory'), event.reason.message); } });
+    $('#factory-source-type').addEventListener('change', () => {
+      const custom = $('#factory-source-type').value !== 'camera';
+      if (custom) { if (![...$('#factory-camera').options].some(o => o.value === '__custom__')) { const option = document.createElement('option'); option.value = '__custom__'; option.textContent = 'Custom source'; $('#factory-camera').append(option); } $('#factory-camera').value = '__custom__'; }
+      $('#factory-custom-source-wrap').hidden = !custom;
+    });
+    $('#factory-audio').checked = localStorage.getItem('grip-factory-audio') === 'true';
+    audioArmed = true;
+    $('#factory-audio').addEventListener('change', () => { localStorage.setItem('grip-factory-audio', String($('#factory-audio').checked)); if ($('#factory-audio').checked) window.GripAlerts.enable().catch(error => window.GripJobs.fail(null,$('#factory'),error.message)); });
+    ['factory-decision-class','factory-decision-threshold','factory-reject-class','factory-delay'].forEach(id => document.getElementById(id).addEventListener('change', async () => {
+      if (!currentStatus.running) return;
+      await api('/api/factory/controls', {method:'POST',body:JSON.stringify({decision_class:$('#factory-decision-class').value,decision_threshold:Number($('#factory-decision-threshold').value),reject_class:$('#factory-reject-class').value,actuator_delay_ms:Number($('#factory-delay').value)})});
+    }));
+    $('#factory-manual-trigger').addEventListener('click',async () => { if (!window.confirm('PHYSICAL ACTUATOR TEST: confirm the actuator area is clear and ARMED shadow testing is complete.')) return; await api('/api/factory/manual-trigger',{method:'POST',body:JSON.stringify({confirm:true})}); });
+    let paused = false;
+    const playback = () => api('/api/factory/playback',{method:'POST',body:JSON.stringify({paused,pause:paused,speed:Number($('#factory-playback-speed').value)})});
+    $('#factory-playback-pause').addEventListener('click',async () => { paused = !paused; await playback(); $('#factory-playback-pause').textContent = paused ? 'Resume playback' : 'Pause playback'; });
+    $('#factory-playback-speed').addEventListener('change',playback);
     $("#factory-camera-preset").addEventListener("change", () => {
       $("#factory-camera-custom").hidden = $("#factory-camera-preset").value !== "custom";
     });
@@ -374,9 +421,11 @@
     $("#arm-cancel").addEventListener("click", () => {
       $("#factory-mode").value = "shadow";
     });
+    $('#arm-dialog').addEventListener('cancel',() => {$('#factory-mode').value = currentStatus.mode || 'shadow';});
     $("#arm-confirm").addEventListener("click", async () => {
       try {
         const status = await api("/api/factory/status");
+        if (!status.running || status.status !== 'running' || status.mode !== 'shadow' || status.shadow_ready === false) throw new Error('Start SHADOW and wait for model readiness before arming.');
         if (status.running) {
           await api("/api/factory/mode", { method: "POST", body: JSON.stringify({ mode: "armed", confirm: true }) });
           return;
@@ -404,12 +453,14 @@
       });
     });
     window.setInterval(async () => {
-      try { renderDecision(await api("/api/factory/decision")); } catch (_error) { /* viewer may be unauthenticated */ }
+      if (decisionBusy) return; decisionBusy = true;
+      try { renderDecision(await api("/api/factory/decision")); } catch (error) { $('#factory-stage').textContent = `Decision connection lost: ${error.message}`; } finally {decisionBusy = false;}
     }, 100);
     window.setInterval(async () => {
-      try { render(await api("/api/factory/status")); } catch (_error) { /* viewer may be unauthenticated */ }
+      if (statusBusy) return; statusBusy = true;
+      try { render(await api("/api/factory/status")); } catch (error) { $('#factory-stage').textContent = `Factory connection lost: ${error.message}`; } finally {statusBusy = false;}
     }, 400);
-    loadCatalog().catch((error) => {
+    if (document.body.dataset.local === 'true') loadCatalog().catch((error) => {
       const stage = $("#factory-stage");
       if (stage && document.body.dataset.local === "true") stage.textContent = error.message;
     });

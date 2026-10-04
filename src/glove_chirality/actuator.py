@@ -78,7 +78,7 @@ def _pyserial_available() -> bool:
 def _default_port_factory(port: str, baud: int):
     import serial
 
-    return serial.Serial(port, baud, timeout=0.05)
+    return serial.Serial(port, baud, timeout=0.05, write_timeout=0.5)
 
 
 class SerialActuator:
@@ -101,6 +101,8 @@ class SerialActuator:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._rx = bytearray()
+        self._generation = 0
+        self._write_lock = threading.Lock()
 
     def available(self) -> bool:
         return _pyserial_available()
@@ -153,11 +155,19 @@ class SerialActuator:
             connected = self._connected
         if not connected:
             raise RuntimeError("actuator is not connected")
-        self._queue.put_nowait(command)
+        with self._lock:
+            self._queue.put_nowait((self._generation, command))
+
+    def cancel_pending(self) -> None:
+        """Cancel unsent host commands. Firmware-delayed commands cannot be recalled."""
+        with self._write_lock:
+            self._generation += 1
+            self._drain()
 
     def disconnect(self) -> None:
         """Stop the worker and close the port. Safe to call from on_fault."""
         self._stop.set()
+        self.cancel_pending()
         self._wake()
         thread = self._thread
         if (
@@ -188,7 +198,10 @@ class SerialActuator:
                 if self._stop.is_set():
                     break
                 if command is not None:
-                    self._write_command(command)
+                    generation, line = command
+                    with self._write_lock:
+                        if generation == self._generation and not self._stop.is_set():
+                            self._write_command(line)
                 if self._stop.is_set():
                     break
                 self._read_acks()
@@ -199,7 +212,7 @@ class SerialActuator:
             with self._lock:
                 self._connected = False
 
-    def _poll_command(self) -> str | None:
+    def _poll_command(self) -> tuple[int, str] | None:
         try:
             item = self._queue.get(timeout=0.05)
         except queue.Empty:

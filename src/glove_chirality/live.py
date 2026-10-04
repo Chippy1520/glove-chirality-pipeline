@@ -120,6 +120,85 @@ class LatestFrameCapture:
             self._thread.join(timeout=2.0)
 
 
+class SequentialVideoCapture:
+    """Lossless file playback; media timestamps are independent of playback speed."""
+
+    def __init__(self, source, *, capture_factory=None):
+        self.capture = (capture_factory or cv2.VideoCapture)(str(source))
+        if not self.capture.isOpened():
+            self.capture.release()
+            raise RuntimeError("Could not open video source")
+        self.fps = float(self.capture.get(cv2.CAP_PROP_FPS))
+        if not np.isfinite(self.fps) or self.fps <= 0:
+            self.capture.release()
+            raise ValueError("Video source must report a positive finite frame rate")
+        self.captured_frames = 0
+        self.dropped_frames = 0
+        self.finished = threading.Event()
+        self._condition = threading.Condition()
+        self._paused = False
+        self._speed = 1.0
+        self._due = None
+        self.time_origin = time.monotonic()
+        self._last_media_time = -1.0
+
+    def start(self):
+        self.time_origin = time.monotonic()
+        return self
+
+    def playback(self, pause=None, speed=None):
+        if pause is not None and not isinstance(pause, bool):
+            raise ValueError("pause must be a boolean")
+        if speed is not None and (isinstance(speed, bool) or speed not in {0.25, 0.5, 1.0, 2.0}):
+            raise ValueError("speed must be 0.25, 0.5, 1, or 2")
+        with self._condition:
+            if pause is not None:
+                self._paused = pause
+            if speed is not None:
+                self._speed = float(speed)
+            self._due = None
+            self._condition.notify_all()
+            return {"paused": self._paused, "speed": self._speed}
+
+    def read(self, timeout=0.1):
+        with self._condition:
+            if self.finished.is_set():
+                return None
+            if self._paused:
+                self._condition.wait(timeout)
+                return None
+            if self._due is not None:
+                remaining = self._due - time.monotonic()
+                if remaining > 0:
+                    self._condition.wait(min(timeout, remaining))
+                    return None
+            ok, image = self.capture.read()
+            if not ok or image is None:
+                self.finished.set()
+                self.capture.release()
+                return None
+            index = self.captured_frames
+            self.captured_frames += 1
+            self._due = time.monotonic() + 1.0 / (self.fps * self._speed)
+            media_time = float(self.capture.get(cv2.CAP_PROP_POS_MSEC)) / 1000.0
+            if not np.isfinite(media_time) or media_time < 0 or (index > 0 and media_time <= self._last_media_time):
+                media_time = max(index / self.fps, self._last_media_time + 1.0 / self.fps)
+            if index == 0:
+                media_time = 0.0
+            self._last_media_time = media_time
+            return CapturedFrame(index, self.time_origin + media_time, image)
+
+    @property
+    def exhausted(self):
+        return self.finished.is_set()
+
+    def stop(self):
+        with self._condition:
+            self.finished.set()
+            self._condition.notify_all()
+            self.capture.release()
+
+
 class JsonlEventSink:
     """Machine-readable event sink; callbacks can replace it for future integrations."""
 
@@ -290,6 +369,9 @@ def run_live_inference(
     session_id: str | None = None,
     config_path: str | None = None,
     should_classify: Callable[[], bool] | None = None,
+    on_stage: Callable[[str, str], None] | None = None,
+    on_firstinference: Callable[[], None] | None = None,
+    classify_callback=None,
 ) -> LiveMetrics:
     """Run event-driven inference with one classifier call per accepted passage."""
     detector = detector or build_detector(config.detector)
@@ -307,7 +389,7 @@ def run_live_inference(
     capture.start()
     sink = JsonlEventSink(output) if event_callback is None else None
     emit = event_callback or sink.emit
-    source_name = f"camera_{source}" if str(source).isdigit() else Path(str(source)).stem
+    source_name = "stream" if "://" in str(source) else (f"camera_{source}" if str(source).isdigit() else Path(str(source)).stem)
     processor = PassageProcessor(detector, config, source_name, "live")
     metrics = LiveMetrics()
     rolling = _RollingMetrics()
@@ -334,6 +416,7 @@ def run_live_inference(
         confidence,
         classifier_ms,
         queue_wait_ms=None,
+        controls=None,
     ) -> None:
         anchor = outcome.trigger_crossing_s
         if anchor is None:
@@ -369,13 +452,21 @@ def run_live_inference(
             payload["crossing_to_decision_ms"] = round(crossing_to_decision_ms, 3)
         if event_callback is not None and outcome.crop is not None:
             payload["crop"] = outcome.crop
+        if controls is not None:
+            payload.update(controls)
         emit(payload)
 
     def classify_outcome(outcome: PassageOutcome, queued_monotonic: float) -> None:
         if before_classify is not None:
             before_classify()
         classifier_start = time.perf_counter()
-        prediction, confidence = classifier.predict_array(outcome.crop)
+        controls = None
+        if classify_callback is None:
+            prediction, confidence = classifier.predict_array(outcome.crop)
+        else:
+            prediction, confidence, controls = classify_callback(outcome.crop, classifier)
+        if on_firstinference is not None:
+            on_firstinference()
         classifier_ms = (time.perf_counter() - classifier_start) * 1000.0
         completed = time.monotonic()
         queue_wait_ms = max(0.0, (completed - queued_monotonic) * 1000.0 - classifier_ms)
@@ -386,11 +477,22 @@ def run_live_inference(
             confidence,
             classifier_ms,
             queue_wait_ms,
+            controls,
         )
 
     classify_error: list[BaseException] = []
 
     def classify_worker() -> None:
+        try:
+            if on_stage is not None:
+                on_stage("classifier_warmup", "running")
+            if config.runtime.warmup or on_stage is not None:
+                classifier.warmup()
+            if on_stage is not None:
+                on_stage("classifier_warmup", "passed")
+        except Exception as exc:  # noqa: BLE001
+            classify_error.append(exc)
+            return
         while True:
             item = classify_queue.get()
             try:
@@ -432,7 +534,7 @@ def run_live_inference(
 
     def consume_packet(packet: CapturedFrame, detections, yolo_ms: float | None, tracking_only=None) -> bool:
         nonlocal last_timestamp, processed_sequence, announced, last_report
-        timestamp_s = packet.captured_at - started
+        timestamp_s = packet.captured_at - getattr(capture, "time_origin", started)
         last_timestamp = timestamp_s
         if detections is None:
             run_detection = processed_sequence % config.runtime.detect_every_n_frames == 0
@@ -452,6 +554,13 @@ def run_live_inference(
         rolling.event_ms.append(result.event_latency_ms)
         if frame_callback is not None:
             frame_callback(packet.image, result, timestamp_s)
+        if not announced:
+            announced = True
+            if on_stage is not None:
+                on_stage("first_frame", "passed")
+                on_stage("detector_inference", "passed")
+            if status_callback is not None:
+                status_callback("RUNNING")
         now_relative = time.monotonic() - started
         for outcome in result.outcomes:
             handle(outcome, now_relative)
@@ -506,22 +615,25 @@ def run_live_inference(
         except Exception as exc:  # noqa: BLE001 - surfaced after the detector thread joins
             detect_error.append(exc)
         finally:
-            detect_queue.put(None)
+            while not pipeline_stop.is_set():
+                try:
+                    detect_queue.put(None, timeout=0.1)
+                    break
+                except queue.Full:
+                    continue
 
     detect_thread = None
     try:
         if config.runtime.stage_pipeline:
-            if config.runtime.warmup:
-                if status_callback is not None:
-                    status_callback("Warming models...")
-                classifier.warmup()
-            if status_callback is not None:
-                status_callback("RUNNING")
-                announced = True
             detect_thread = threading.Thread(target=detect_worker, name="layer1-detector", daemon=True)
             detect_thread.start()
             while stop_event is None or not stop_event.is_set():
-                item = detect_queue.get()
+                if classify_error:
+                    raise classify_error[0]
+                try:
+                    item = detect_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
                 if item is None:
                     break
                 packet, found, elapsed, partials = item
@@ -529,6 +641,8 @@ def run_live_inference(
                     break
         else:
             while stop_event is None or not stop_event.is_set():
+                if classify_error:
+                    raise classify_error[0]
                 packet = capture.read(timeout=0.1)
                 if packet is None:
                     if capture.exhausted or (stop_event is not None and stop_event.is_set()):
@@ -538,11 +652,7 @@ def run_live_inference(
                     if status_callback is not None:
                         status_callback("Warming models...")
                     detector.warmup(np.zeros_like(packet.image))
-                    classifier.warmup()
                     warmed = True
-                if not announced and status_callback is not None:
-                    status_callback("RUNNING")
-                    announced = True
                 if not consume_packet(packet, None, None):
                     break
         now_relative = time.monotonic() - started

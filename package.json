@@ -1,0 +1,10 @@
+{
+  "name": "grip-workstation-contract-tests",
+  "private": true,
+  "scripts": {
+    "test:frontend": "node tools/test_workstation_frontend.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}

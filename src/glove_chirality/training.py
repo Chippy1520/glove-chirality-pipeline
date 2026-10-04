@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+import time
 from collections import Counter
+from collections.abc import Callable
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from glove_chirality.dataset import (
@@ -130,7 +134,14 @@ def train_classifier(
     tensorboard_logdir: str | Path | None = None,
     head_only_epochs: int = 0,
     backbone_learning_rate: float | None = None,
+    progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
+    started_at = time.monotonic()
+
+    def progress(stage: str, **values) -> None:
+        if progress_callback is not None:
+            progress_callback({"stage": stage, "progress": values})
+
     tuning_config = fine_tuning_config(
         epochs, learning_rate, head_only_epochs, backbone_learning_rate
     )
@@ -155,6 +166,31 @@ def train_classifier(
     if device_name.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested, but this PyTorch installation cannot access a GPU")
     device = torch.device(device_name)
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        pipeline_version = version("glove-chirality")
+    except PackageNotFoundError:
+        pipeline_version = "source checkout"
+    configuration = {
+        "manifest": str(Path(manifest).resolve()),
+        "manifest_sha256": hashlib.sha256(Path(manifest).read_bytes()).hexdigest(),
+        "output": str(output.resolve()), "architecture": model_name,
+        "seed": seed, "epochs": epochs, "batch_size": batch_size,
+        "image_size": image_size, "learning_rate": learning_rate,
+        "validation_fraction": validation_fraction, "augmentation": augmentation,
+        "loss": loss_name, "recall_target": recall_target, "recall_weight": recall_weight,
+        "selection_metric": selection_metric, "device": str(device),
+        "amp_requested": amp, "amp": amp and device.type == "cuda", "workers": workers,
+        "tensorboard_logdir": str(tensorboard_logdir) if tensorboard_logdir else None,
+        "fine_tuning": tuning_config, "split_id": split_id,
+        "software": {"python": sys.version.split()[0], "torch": str(torch.__version__),
+                     "pipeline": pipeline_version, "model_backend": model_backend(model_name)},
+    }
+    configuration_path = output.with_suffix(output.suffix + ".training_config.json")
+    configuration_path.write_text(json.dumps(configuration, indent=2), encoding="utf-8")
+    progress("Initializing classifier", device=str(device), epochs=epochs,
+             train_samples=len(train_rows), validation_samples=len(validation_rows))
     loader_options = {
         "batch_size": batch_size,
         "num_workers": workers,
@@ -221,31 +257,60 @@ def train_classifier(
 
     for epoch in range(epochs):
         epoch_state = tuning.begin_epoch(epoch)
+        progress("Training", epoch=epoch + 1, epochs=epochs, training_stage=epoch_state["stage"],
+                 batches_completed=0, batches_total=len(train_loader), device=str(device))
         epoch_loss = 0.0
         batch_count = 0
+        last_progress_at = time.monotonic()
         for images, targets in train_loader:
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
             optimizer.zero_grad()
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
                 loss = loss_fn(model(images), targets)
-            if writer is not None:
-                epoch_loss += float(loss.detach().cpu())
-                batch_count += 1
+            if not torch.isfinite(loss).item():
+                raise RuntimeError(f"Nonfinite training loss at epoch {epoch + 1}")
+            epoch_loss += float(loss.detach().cpu())
+            batch_count += 1
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+            if time.monotonic() - last_progress_at >= 0.75:
+                progress("Training", epoch=epoch + 1, epochs=epochs,
+                         batches_completed=batch_count, batches_total=len(train_loader),
+                         train_loss=epoch_loss / batch_count, device=str(device))
+                last_progress_at = time.monotonic()
 
         model.eval()
         targets_all: list[int] = []
         predictions_all: list[int] = []
+        validation_loss_total = 0.0
+        validation_count = 0
+        progress("Validation", epoch=epoch + 1, epochs=epochs,
+                 train_loss=epoch_loss / max(batch_count, 1), device=str(device))
         with torch.no_grad():
             for images, targets in validation_loader:
-                predictions = model(images.to(device)).argmax(1).cpu()
+                logits = model(images.to(device))
+                if not torch.isfinite(logits).all().item():
+                    raise RuntimeError(f"Nonfinite validation logits at epoch {epoch + 1}")
+                validation_loss_total += float(loss_fn(logits, targets.to(device)).cpu()) * len(targets)
+                validation_count += len(targets)
+                predictions = logits.argmax(1).cpu()
                 predictions_all.extend(predictions.tolist())
                 targets_all.extend(targets.tolist())
         metrics = classification_metrics(targets_all, predictions_all, len(CLASSES))
-        history.append({**epoch_state, "validation": metrics})
+        epoch_record = {
+            **epoch_state, "validation": metrics,
+            "train_loss": epoch_loss / max(batch_count, 1),
+            "validation_loss": validation_loss_total / max(validation_count, 1),
+        }
+        history.append(epoch_record)
+        output.with_suffix(output.suffix + ".progress.json").write_text(
+            json.dumps({"status": "running", "history": history}, indent=2), encoding="utf-8"
+        )
+        progress("Epoch completed", epoch=epoch + 1, epochs=epochs,
+                 train_loss=epoch_record["train_loss"], validation_loss=epoch_record["validation_loss"],
+                 validation=metrics, device=str(device), elapsed_time=time.monotonic() - started_at)
         if writer is not None:
             writer.add_text("training/stage", epoch_state["stage"], epoch + 1)
             for key in ("head_learning_rate", "backbone_learning_rate"):
@@ -322,8 +387,16 @@ def train_classifier(
         "fine_tuning": tuning_config,
         "best_epoch": best_epoch,
         "history": history,
+        "checkpoint": str(output.resolve()),
+        "training_config": str(configuration_path.resolve()),
+        "training_time_s": time.monotonic() - started_at,
     }
     output.with_suffix(output.suffix + ".metrics.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
+    output.with_suffix(output.suffix + ".progress.json").write_text(
+        json.dumps({"status": "succeeded", "history": history}, indent=2), encoding="utf-8"
+    )
+    progress("Training complete", epoch=epochs, epochs=epochs,
+             validation=best_metrics, checkpoint=str(output.resolve()))
     return summary

@@ -3,9 +3,12 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 import os
+import re
 import threading
 import time
+import uuid
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -359,9 +362,24 @@ def _display_preview(frame, config, detections, rejected, show_rejected) -> np.n
 class FactoryLiveSession:
     """Host-side factory inspection session. Inference stays on this server."""
 
-    def __init__(self, workdir: str | Path):
+    def __init__(self, workdir: str | Path, *, hardware_allowed: bool = True):
         self.workdir = Path(workdir)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._controls_lock = threading.Lock()
+        self._control_revision = 0
+        self._arm_revision = 0
+        self.hardware_allowed = bool(hardware_allowed)
+        self.source_type = "camera"
+        self.job_id = None
+        self.current_stage = "idle"
+        self.checks = []
+        self._ready_stages = set()
+        self._ended_wall = None
+        self._started_monotonic = None
+        self._ended_monotonic = None
+        self._capture = None
+        self._playback = {"paused": False, "speed": 1.0}
+        self._controls = {"decision_policy": "argmax", "decision_class": "argmax", "decision_threshold": 0.5, "reject_class": "right", "actuator_delay_ms": 850}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.running = False
@@ -406,7 +424,7 @@ class FactoryLiveSession:
         self._jpeg_cache: bytes | None = None
         self._jpeg_at = 0.0
         self._preview_encode_ms: float | None = None
-        self._device_status = device_status()
+        self._device_status = {"label": "Not probed", "cuda_available": None}
         self._decision = {"phase": "WAITING"}
         self._settled_phase = "WAITING"
         self._inspecting_until = 0.0
@@ -425,8 +443,281 @@ class FactoryLiveSession:
         }
 
     def _set_status(self, status: str) -> None:
+        stages = {
+            "Loading Layer-1 detector...": "detector",
+            "Loading Layer-2 classifier...": "classifier",
+            "Opening camera...": "source_open",
+            "Warming models...": "warmup",
+        }
         with self._lock:
-            self.status = status
+            if status == "RUNNING":
+                return  # A runner's announcement is not proof of readiness.
+            if status in stages:
+                self.status = "starting"
+                self.current_stage = stages[status]
+            else:
+                self.status = status
+
+    def _on_stage(self, stage: str, status: str) -> None:
+        with self._lock:
+            self.current_stage = stage
+            self.checks = [item for item in self.checks if item["field"] != stage]
+            self.checks.append({"field": stage, "label": stage.replace("_", " ").title(),
+                                "status": status, "message": status})
+            if status == "passed":
+                self._ready_stages.add(stage)
+            if self.running and not self._stop.is_set() and {"first_frame", "detector_inference", "classifier_warmup"} <= self._ready_stages:
+                self.status = "running"
+                self.current_stage = "running"
+
+    def _cancel_pending(self) -> None:
+        if self._serial is not None:
+            cancel = getattr(self._serial, "cancel_pending", None)
+            if cancel is not None:
+                cancel()
+
+    def _hardware_guard(self) -> None:
+        if not self.hardware_allowed or self.source_type == "video":
+            raise ValueError("Hardware is disabled for generic inference and video playback")
+
+    @staticmethod
+    def _validate_controls(payload, current):
+        values = dict(current)
+        aliases = {"threshold": "decision_threshold", "policy": "decision_policy", "delay_ms": "actuator_delay_ms"}
+        for key, value in payload.items():
+            key = aliases.get(key, key)
+            if key in values:
+                values[key] = value
+        policy = str(values["decision_policy"])
+        if "decision_class" in payload and "decision_policy" not in payload and "policy" not in payload:
+            policy = "argmax" if values["decision_class"] == "argmax" else "threshold"
+        if policy not in {"argmax", "threshold"}:
+            raise ValueError("decision_policy must be argmax or threshold")
+        decision_class = str(values["decision_class"])
+        if policy == "argmax":
+            decision_class = "argmax"
+        elif decision_class not in {"left", "right"}:
+            raise ValueError("threshold policy requires decision_class left or right")
+        threshold = float(values["decision_threshold"])
+        if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+            raise ValueError("decision_threshold must be finite and in [0, 1]")
+        reject = str(values["reject_class"])
+        if reject not in {"left", "right"}:
+            raise ValueError("reject_class must be left or right")
+        delay = float(values["actuator_delay_ms"])
+        if not math.isfinite(delay) or not 0 <= delay <= 60000 or not delay.is_integer():
+            raise ValueError("actuator delay must be an integer in [0, 60000] ms")
+        return {"decision_policy": policy, "decision_class": decision_class,
+                "decision_threshold": threshold, "reject_class": reject, "actuator_delay_ms": int(delay)}
+
+    def update_controls(self, payload: dict) -> dict:
+        with self._controls_lock:
+            values = self._validate_controls(payload, self._controls)
+            with self._lock:
+                if values != self._controls:
+                    self._control_revision += 1
+                    self.mode = "shadow"
+                    self._cancel_pending()
+                self._controls = values
+                self.reject_class = values["reject_class"]
+                self._delay_ms = values["actuator_delay_ms"]
+            return dict(values)
+
+    def _classify(self, crop, classifier):
+        # Only Layer 2 takes this lock; Layer 1 never waits for model inference.
+        with self._controls_lock:
+            values = dict(self._controls)
+            classifier.decision_class = values["decision_class"]
+            classifier.decision_threshold = values["decision_threshold"]
+            values["control_revision"] = self._control_revision
+            values["arm_revision"] = self._arm_revision
+            prediction, confidence = classifier.predict_array(crop)
+        return prediction, confidence, values
+
+    def playback(self, pause: bool | None = None, speed: float | None = None) -> dict:
+        if self.source_type != "video":
+            raise ValueError("Playback controls require a video source")
+        if pause is not None and not isinstance(pause, bool):
+            raise ValueError("pause must be a boolean")
+        if speed is not None and (isinstance(speed, bool) or speed not in {0.25, 0.5, 1, 2}):
+            raise ValueError("speed must be 0.25, 0.5, 1, or 2")
+        with self._lock:
+            if pause is not None:
+                self._playback["paused"] = pause
+            if speed is not None:
+                self._playback["speed"] = float(speed)
+            if self._capture is not None:
+                self._capture.playback(pause=pause, speed=speed)
+            return dict(self._playback)
+
+    def manual_trigger(self, *, confirm: bool = False) -> dict:
+        from glove_chirality.actuator import reject_command
+
+        with self._lock:
+            self._hardware_guard()
+            if confirm is not True or self.mode != "armed" or self.status != "running" or self.fault:
+                raise ValueError("Manual trigger requires confirmed, running ARMED mode")
+            if not self._serial_snapshot().get("connected"):
+                raise ValueError("Actuator is not connected")
+            event_id = "manual_" + uuid.uuid4().hex
+            self._serial_actor().submit(reject_command(event_id, self._delay_ms))
+            self._counters["commands_sent"] += 1
+            self._append_actuator({"kind": "manual_trigger", "event_id": event_id})
+            return {"status": "queued", "event_id": event_id}
+
+    def simulate_trigger(self) -> dict:
+        record = {"kind": "simulated_trigger", "actuated": False}
+        self._append_actuator(record)
+        with self._lock:
+            self._events.append(record)
+        return record
+
+    def preflight(self, options: dict) -> dict:
+        """Accumulate plain validation without opening a camera, loading models, or serial."""
+        checks = []
+        def check(field, action):
+            try:
+                action()
+            except Exception:  # noqa: BLE001 - independent YAML/config field diagnostics
+                checks.append({"field": field, "label": field.replace("_", " ").title(),
+                               "status": "failed", "message": f"Invalid {field.replace('_', ' ')}"})
+            else:
+                checks.append({"field": field, "label": field.replace("_", " ").title(),
+                               "status": "passed", "message": "Validated"})
+        def require(condition):
+            if not condition:
+                raise ValueError("Invalid option")
+        source = str(options.get("source", options.get("source_path", ""))).strip()
+        kind = str(options.get("source_type", "camera"))
+        def source_check():
+            from urllib.parse import urlsplit
+            require(kind in {"camera", "video", "stream"})
+            if kind == "camera":
+                require(source.isdigit())  # A file cannot spoof a camera to actuate.
+            elif kind == "video":
+                require(Path(source).is_file())
+            else:
+                require(urlsplit(source).scheme.lower() in {"rtsp", "rtsps", "http", "https", "rtmp"})
+                require(bool(urlsplit(source).hostname))
+        check("source", source_check)
+        check("mode", lambda: require(options.get("mode", "shadow") in MODES))
+        if options.get("mode") == "armed" and kind != "video":
+            check("confirm_armed", lambda: require(options.get("confirm_armed") is True))
+            check("hardware", lambda: require(self.hardware_allowed))
+        def config_check():
+            path = Path(str(options.get("config", "")))
+            require(path.is_file())
+            config = ExtractionConfig.from_yaml(path)
+            if options.get("geometry") == "grip":
+                apply_grip_geometry(config)
+            else:
+                self._apply_trigger_overrides(config, options)
+        check("config", config_check)
+        check("checkpoint", lambda: require(Path(str(options.get("checkpoint", ""))).is_file()))
+        def camera_check():
+            require(options.get("camera_preset", "auto") in {"auto", "custom", "grip_1080p"})
+            camera = camera_request(options)
+            for field in ("width", "height"):
+                require(camera.get(field) is None or 0 < camera[field] <= 16384)
+            require(camera.get("fourcc") is None or len(camera["fourcc"]) == 4)
+        check("camera", camera_check)
+        check("device", lambda: require(bool(re.fullmatch(r"auto|cpu|cuda(?::[0-9]+)?", str(options.get("device", "auto"))))))
+        # Independently validate fields so the UI reports all invalid inputs together.
+        for field in ("decision_policy", "decision_class", "decision_threshold", "reject_class", "actuator_delay_ms"):
+            subset = {field: options[field]} if field in options else {}
+            if field == "decision_class" and "decision_class" in options:
+                subset["decision_policy"] = "argmax" if options[field] == "argmax" else "threshold"
+            if field == "decision_policy" and options.get(field) == "threshold":
+                subset["decision_class"] = options.get("decision_class", "right")
+            if field == "actuator_delay_ms" and "delay_ms" in options:
+                subset[field] = options["delay_ms"]
+            if field == "decision_threshold" and "threshold" in options:
+                subset[field] = options["threshold"]
+            check(field, lambda subset=subset: self._validate_controls(subset, self._controls))
+        return {"status": "ready" if all(c["status"] == "passed" for c in checks) else "failed", "checks": checks}
+
+    def start(self, options: dict, *, runner=None, detector=None, classifier=None, capture=None) -> dict:
+        with self._lock:
+            if self.running or (self._thread is not None and self._thread.is_alive()):
+                raise ValueError("Stop the current session before starting another")
+            self.job_id = uuid.uuid4().hex
+            self.session_dir = None
+            self.session_id = None
+            self.running = True
+            self.status = "preflight"
+            self.current_stage = "validation"
+            self.checks = []
+            self.fault = None
+            self.mode = "shadow"
+            self._stop.clear()
+            self._ready_stages.clear()
+            self._started_wall = datetime.now().astimezone().isoformat(timespec="milliseconds")
+            self._started_monotonic = time.monotonic()
+            self._ended_wall = None
+            self._ended_monotonic = None
+            self._capture = None
+            self._latest = None
+            self._latest_crop = None
+            self._preview_source = None
+            self._jpeg_cache = None
+            self._events.clear()
+            self._metrics = {}
+            self._positions = []
+            self._camera_actual = {}
+            self._yolo_counts = {}
+            self.actual_device = None
+            self.model_name = None
+            self._checkpoint_sha256 = None
+            self._cancel_pending()
+            self._options = dict(options)
+            self._injected = {"runner": runner, "detector": detector, "classifier": classifier, "capture": capture}
+            response = {"status": "preflight", "job_id": self.job_id, "checks": []}
+            self._thread = threading.Thread(target=self._startup, args=(dict(options),), daemon=True)
+            self._thread.start()
+            return response
+
+    def _startup(self, options):
+        try:
+            result = self.preflight(options)
+            with self._lock:
+                self.checks = result["checks"]
+            if result["status"] == "failed":
+                raise ValueError("Preflight validation failed; review checks")
+            if self._stop.is_set():
+                self._set_status("stopped")
+                return
+            options["source"] = str(options.get("source", options.get("source_path", ""))).strip()
+            self.source_type = str(options.get("source_type", "camera"))
+            self.update_controls(options)
+            # Startup is always shadow. Arming is a separate confirmed action after readiness.
+            options["mode"] = "preview" if options.get("mode") == "preview" and self.source_type != "video" else "shadow"
+            self._prepare_start(options)
+            self._run()
+        except Exception as exc:  # noqa: BLE001 - always expose startup failures as diagnostics
+            with self._lock:
+                self.fault = self._safe_error(exc)
+                self.status = "fault"
+                self.checks.append({"field": self.current_stage, "label": "Startup", "status": "failed", "message": self.fault})
+        finally:
+            if self._capture is not None and hasattr(self._capture, "stop"):
+                self._capture.stop()
+            with self._lock:
+                self._cancel_pending()
+                self.running = False
+                self.mode = "shadow"
+                self._ended_wall = datetime.now().astimezone().isoformat(timespec="milliseconds")
+                self._ended_monotonic = time.monotonic()
+                if self._stop.is_set() and self.status != "fault":
+                    self.status = "stopped"
+                self._cancel_pending()
+            self._write_session()
+
+    def _safe_error(self, exc):
+        message = str(exc)
+        source = str(self._options.get("source", ""))
+        if source and "://" in source:
+            message = message.replace(source, "[stream]")
+        return re.sub(r"(\w+://)[^\s/@]+:[^\s/@]+@", r"\1[redacted]@", message)
 
     def _remember_mode(self, mode: str) -> None:
         self._mode_history.append(
@@ -439,21 +730,26 @@ class FactoryLiveSession:
     def set_mode(self, mode: str, *, confirm: bool = False) -> str:
         if mode not in MODES:
             raise ValueError("mode must be preview, shadow, or armed")
-        if mode == "armed":
-            if not confirm:
-                raise ValueError("ARMED mode requires explicit confirmation")
-            if self.fault:
-                raise ValueError(f"Cannot arm while a fault is active: {self.fault}")
-            serial = self._serial_snapshot()
-            if not serial.get("connected"):
-                raise ValueError("Connect the actuator before ARMED mode")
         with self._lock:
+            if mode == "armed":
+                self._hardware_guard()
+                if self.status != "running" or not self.running or self._stop.is_set():
+                    raise ValueError("ARMED mode requires a successfully running shadow session")
+                if confirm is not True:
+                    raise ValueError("ARMED mode requires explicit confirmation")
+                if self.fault:
+                    raise ValueError(f"Cannot arm while a fault is active: {self.fault}")
+                if not self._serial_snapshot().get("connected"):
+                    raise ValueError("Connect the actuator before ARMED mode")
+            self._cancel_pending()
+            self._arm_revision += 1
             self.mode = mode
             self._remember_mode(mode)
         self._write_session()
         return mode
 
     def _serial_actor(self):
+        self._hardware_guard()
         if self._serial is None:
             from glove_chirality.actuator import SerialActuator
 
@@ -466,6 +762,8 @@ class FactoryLiveSession:
         return list_serial_ports()
 
     def connect_serial(self, port: str, baud: int = 115200) -> dict[str, Any]:
+        self._hardware_guard()
+        self.set_mode("shadow")
         if not port.strip():
             raise ValueError("Serial port is required")
         if baud <= 0:
@@ -481,6 +779,9 @@ class FactoryLiveSession:
         return actor.snapshot()
 
     def disconnect_serial(self) -> dict[str, Any]:
+        with self._lock:
+            self.mode = "shadow"
+            self._cancel_pending()
         if self._serial is None:
             return {"connected": False, "last_command": None, "last_ack": None, "fault": None}
         self._serial.disconnect()
@@ -488,6 +789,7 @@ class FactoryLiveSession:
 
     def _on_serial_fault(self, message: str) -> None:
         with self._lock:
+            self._cancel_pending()
             self.fault = f"Serial fault: {message}"
             if self.mode == "armed":
                 self.mode = "shadow"
@@ -513,7 +815,7 @@ class FactoryLiveSession:
             counters = dict(self._counters)
         return counters
 
-    def start(
+    def _prepare_start(
         self,
         options: dict[str, Any],
         *,
@@ -522,8 +824,6 @@ class FactoryLiveSession:
         classifier=None,
         capture=None,
     ) -> dict[str, Any]:
-        if self.running:
-            raise ValueError("Stop the current Factory Live session before starting another")
         mode = str(options.get("mode", "shadow"))
         if mode not in MODES:
             raise ValueError("mode must be preview, shadow, or armed")
@@ -550,27 +850,26 @@ class FactoryLiveSession:
             status = device_status()
             if not status["cuda_available"]:
                 raise ValueError("CUDA was requested but PyTorch reports CUDA unavailable")
-        reject_class = str(options.get("reject_class", "right"))
+        reject_class = self._controls["reject_class"]
         if reject_class not in {"left", "right"}:
             raise ValueError("reject_class must be left or right")
-        delay_ms = int(options.get("delay_ms", 850))
+        delay_ms = self._controls["actuator_delay_ms"]
         if delay_ms < 0:
             raise ValueError("Actuator delay must be non-negative")
         if mode == "armed" and not self._serial_snapshot().get("connected"):
             raise ValueError("Connect the actuator before ARMED mode")
 
         stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-        directory = self.workdir / "outputs" / "factory_live" / stamp
-        if directory.exists():
-            directory = self.workdir / "outputs" / "factory_live" / f"{stamp}_{time.time_ns()}"
+        workflow = "factory" if self.hardware_allowed else "inference"
+        directory = self.workdir / "outputs" / f"{workflow}_live" / f"{stamp}_{self.job_id}"
         directory.mkdir(parents=True, exist_ok=False)
         with self._lock:
-            self._stop.clear()
             self.running = True
             self.fault = None
-            self.status = "Loading Layer-1 detector..."
+            self.status = "starting"
+            self.current_stage = "detector"
             self.mode = "shadow"
-            self.session_id = f"factory_{stamp}"
+            self.session_id = f"{workflow}_{stamp}_{self.job_id}"
             self.session_dir = directory
             self.reject_class = reject_class
             self.checkpoint = checkpoint
@@ -592,20 +891,6 @@ class FactoryLiveSession:
             self._started_wall = datetime.now().astimezone().isoformat(timespec="milliseconds")
         self._open_logs(directory)
         self._write_session()
-        self._injected = {
-            "runner": runner,
-            "detector": detector,
-            "classifier": classifier,
-            "capture": capture,
-        }
-        self._thread = threading.Thread(
-            target=self._run,
-            name="grip-factory-live",
-            daemon=True,
-        )
-        self._thread.start()
-        return {"status": "starting", "session_id": self.session_id, "session_dir": str(directory)}
-
     @staticmethod
     def _apply_trigger_overrides(config: ExtractionConfig, options: dict[str, Any]) -> None:
         if options.get("belt_direction"):
@@ -647,7 +932,7 @@ class FactoryLiveSession:
             "session_id": self.session_id,
             "start_wall_time_iso": self._started_wall,
             "end_wall_time_iso": None if self.running else datetime.now().astimezone().isoformat(timespec="milliseconds"),
-            "camera": self._options.get("source"),
+            "camera": "[stream]" if self.source_type == "stream" else self._options.get("source"),
             "checkpoint": self.checkpoint,
             "checkpoint_sha256": self._checkpoint_sha256,
             "model_name": self.model_name,
@@ -690,6 +975,7 @@ class FactoryLiveSession:
         from glove_chirality.inference import TorchClassifier
         from glove_chirality.live import (
             LatestFrameCapture,
+            SequentialVideoCapture,
             parse_capture_source,
             run_live_inference,
         )
@@ -705,6 +991,7 @@ class FactoryLiveSession:
                 return
             detector = injected.get("detector") or build_detector(config.detector)
             self._active_detector = detector
+            self._on_stage("detector", "passed")
             self._set_status("Loading Layer-2 classifier...")
             if self._stop.is_set():
                 return
@@ -715,6 +1002,7 @@ class FactoryLiveSession:
                 decision_class=str(self._options.get("decision_class", "argmax")),
                 decision_threshold=float(self._options.get("decision_threshold", 0.5)),
             )
+            self._on_stage("classifier", "passed")
             device_obj = getattr(classifier, "device", "cpu")
             device_type = getattr(device_obj, "type", str(device_obj))
             with self._lock:
@@ -730,11 +1018,19 @@ class FactoryLiveSession:
             self._set_status("Opening camera...")
             if self._stop.is_set():
                 return
-            capture = injected.get("capture") or LatestFrameCapture(
-                parse_capture_source(str(self._options.get("source"))),
-                config.runtime.capture_queue_size,
-                camera_mode=self._camera_request,
-            )
+            capture = injected.get("capture")
+            if capture is None:
+                if self.source_type == "video":
+                    capture = SequentialVideoCapture(self._options["source"])
+                else:
+                    capture = LatestFrameCapture(
+                        parse_capture_source(self._options["source"]),
+                        config.runtime.capture_queue_size, camera_mode=self._camera_request,
+                    )
+            self._capture = capture
+            if self.source_type == "video":
+                capture.playback(pause=self._playback["paused"], speed=self._playback["speed"])
+            self._on_stage("source_open", "passed")
             self._record_camera(capture)
             self._set_status("Warming models...")
             runner(
@@ -757,13 +1053,17 @@ class FactoryLiveSession:
                 session_id=self.session_id,
                 config_path=self.config_path,
                 should_classify=lambda: self.mode != "preview",
+                on_stage=self._on_stage,
+                on_firstinference=lambda: self._on_stage("classifier_inference", "passed"),
+                classify_callback=self._classify,
             )
-            if not self._stop.is_set():
+            if not self._stop.is_set() and self.source_type != "video":
                 raise RuntimeError("Camera stream ended")
             self._set_status("stopped")
         except Exception as exc:  # noqa: BLE001 - camera, model, and runtime faults must disarm
             with self._lock:
-                self.fault = str(exc)
+                self.fault = self._safe_error(exc)
+                self.checks.append({"field": self.current_stage, "label": "Runtime", "status": "failed", "message": self.fault})
                 self.mode = "shadow"
                 self.status = "fault"
                 self._remember_mode("shadow")
@@ -789,7 +1089,7 @@ class FactoryLiveSession:
             return {
                 "phase": self._decision["phase"],
                 "running": self.running,
-                "fault": self.fault,
+                "fault": "Session fault; see host diagnostics" if self.fault else None,
             }
 
     def set_display(self, *, show_size_rejected: bool) -> None:
@@ -910,10 +1210,18 @@ class FactoryLiveSession:
 
         record = dict(payload)
         with self._lock:
-            mode = self.mode
-            reject_class = self.reject_class
-            delay_ms = self._delay_ms
+            mode = self.mode if self.hardware_allowed and self.source_type != "video" else "shadow"
+            if mode == "armed" and (record.get("control_revision", self._control_revision) != self._control_revision or record.get("arm_revision", self._arm_revision) != self._arm_revision):
+                mode = "shadow"
+            if mode == "armed" and (not self.running or self.status != "running" or self.fault or not self._serial_snapshot().get("connected")):
+                mode = "shadow"
+            reject_class = record.get("reject_class", self.reject_class)
+            delay_ms = record.get("actuator_delay_ms", self._delay_ms)
+            for key, value in self._controls.items():
+                record.setdefault(key, value)
             commanded = set(self._commanded)
+            arm_revision = self._arm_revision
+            control_revision = self._control_revision
         prediction = record.get("prediction")
         status = str(record.get("status"))
         event_id = str(record.get("event_id"))
@@ -926,6 +1234,8 @@ class FactoryLiveSession:
             delay_ms=delay_ms,
             commanded=commanded,
         )
+        record["policy"] = record["decision_policy"]
+        record["threshold"] = record["decision_threshold"]
         record["operating_mode"] = mode
         record["result"] = _result_label(status, prediction, reject_class)
         record["would_reject"] = mode == "shadow" and status == "accepted" and prediction == reject_class
@@ -945,7 +1255,9 @@ class FactoryLiveSession:
                 self._commanded.add(event_id)
                 self._counters["commands_sent"] += 1
             try:
-                self._serial_actor().submit(command)
+                with self._lock:
+                    if self.mode == "armed" and self.running and self.status == "running" and not self.fault and self._arm_revision == arm_revision and self._control_revision == control_revision:
+                        self._serial_actor().submit(command)
             except Exception as exc:  # noqa: BLE001 - a failed enqueue must not block inference
                 self._on_serial_fault(str(exc))
         self._count(record)
@@ -978,6 +1290,11 @@ class FactoryLiveSession:
 
     def stop(self) -> None:
         self._stop.set()
+        with self._lock:
+            self.mode = "shadow"
+            self._cancel_pending()
+        if self._capture is not None and hasattr(self._capture, "stop"):
+            self._capture.stop()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
@@ -999,6 +1316,24 @@ class FactoryLiveSession:
             payload = {
                 "running": self.running,
                 "status": self.status,
+                "startup_status": self.status,
+                "job_id": self.job_id,
+                "workflow": "factory" if self.hardware_allowed else "inference",
+                "hardware_allowed": self.hardware_allowed and self.source_type != "video",
+                "pending_cancellation": "Unsent host commands only; firmware-delayed commands cannot be recalled",
+                "actuator_state": "DISABLED" if not self.hardware_allowed or self.source_type == "video" else self.mode.upper(),
+                "source_type": self.source_type,
+                "current_stage": self.current_stage,
+                "checks": [dict(c) for c in self.checks],
+                "error": self.fault,
+                "start_time": self._started_wall,
+                "end_time": self._ended_wall,
+                "elapsed_s": None if self._started_monotonic is None else (self._ended_monotonic or time.monotonic()) - self._started_monotonic,
+                "playback": dict(self._playback),
+                "policy": self._controls["decision_policy"],
+                "threshold": self._controls["decision_threshold"],
+                "decision_class": self._controls["decision_class"],
+                "actuator_delay_ms": self._delay_ms,
                 "mode": self.mode,
                 "fault": self.fault,
                 "session_id": self.session_id,
@@ -1027,19 +1362,25 @@ class FactoryLiveSession:
                         "session_dir": None if self.session_dir is None else str(self.session_dir),
                         "checkpoint": self.checkpoint,
                         "config_path": self.config_path,
-                        "camera": self._options.get("source"),
+                        "camera": "[stream]" if self.source_type == "stream" else self._options.get("source"),
                     }
                 )
             else:
+                payload["fault"] = "Session fault; see host diagnostics" if self.fault else None
+                payload["error"] = payload["fault"]
+                payload["checks"] = [{**c, "message": "See host diagnostics" if c["status"] == "failed" else c["message"]} for c in self.checks]
                 payload["serial"] = {
                     "connected": serial.get("connected", False),
                     "last_command": serial.get("last_command"),
                     "last_ack": serial.get("last_ack"),
-                    "fault": serial.get("fault"),
+                    "fault": "Serial fault" if serial.get("fault") else None,
                 }
                 payload["events"] = [_public_event(item) for item in payload["events"]]
                 if payload["latest"] is not None:
                     payload["latest"] = _public_event(payload["latest"])
+        payload["preflight"] = {"checks": payload["checks"],
+                                "errors": [c["message"] for c in payload["checks"] if c["status"] == "failed"]}
+        payload["elapsed_time"] = payload["elapsed_s"]
         return payload
 
     def export_csv(self) -> str:

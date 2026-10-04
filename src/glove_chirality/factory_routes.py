@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import wraps
 from pathlib import Path
 
 from flask import Response, jsonify, request
@@ -29,29 +30,59 @@ def _flag(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def register_factory_routes(app, factory: FactoryLiveSession, host_only) -> None:
-    @app.get("/api/factory/decision")
+def register_factory_routes(app, factory: FactoryLiveSession, host_only, *,
+                            prefix: str = "/api/factory", hardware_enabled: bool | None = None) -> None:
+    hardware = factory.hardware_allowed if hardware_enabled is None else (hardware_enabled and factory.hardware_allowed)
+    namespace = prefix.strip("/").replace("/", "_")
+
+    def route(path, method):
+        def decorate(function):
+            @wraps(function)
+            def guarded(*args, **kwargs):
+                try:
+                    return function(*args, **kwargs)
+                except (ValueError, TypeError, RuntimeError, OSError, OverflowError) as exc:
+                    return jsonify(error=factory._safe_error(exc), checks=[{
+                        "field": "request", "label": "Request", "status": "failed",
+                        "message": factory._safe_error(exc),
+                    }]), 400
+            suffix = path.removeprefix("/api/factory")
+            dangerous = suffix.startswith("/serial/") or suffix in {"/ports", "/mode", "/manual-trigger"}
+            if hardware or not dangerous:
+                app.add_url_rule(prefix + suffix, endpoint=namespace + "_" + function.__name__,
+                                 view_func=guarded, methods=[method])
+            return guarded
+        return decorate
+
+    def get(path):
+        return route(path, "GET")
+
+    def post(path):
+        return route(path, "POST")
+
+    @get("/api/factory/decision")
     def factory_decision():
         return jsonify(factory.decision())
 
-    @app.get("/api/factory/status")
+    @get("/api/factory/status")
+    @host_only
     def factory_status():
         return jsonify(factory.snapshot(reveal_paths=True))
 
-    @app.get("/api/factory/cameras")
+    @get("/api/factory/cameras")
     @host_only
     def factory_cameras():
         if factory.running:
             raise ValueError("Stop the live session before scanning cameras")
         return jsonify(cameras=scan_cameras())
 
-    @app.get("/api/factory/checkpoints")
+    @get("/api/factory/checkpoints")
     @host_only
     def factory_checkpoints():
         root = request.args.get("root") or load_settings(factory.workdir).get("models_root")
         return jsonify(root=str(root), checkpoints=discover_checkpoints(root))
 
-    @app.post("/api/factory/models-root")
+    @post("/api/factory/models-root")
     @host_only
     def factory_models_root():
         path = str(_payload().get("path", "")).strip()
@@ -63,47 +94,47 @@ def register_factory_routes(app, factory: FactoryLiveSession, host_only) -> None
         saved = save_settings(factory.workdir, {"models_root": str(resolved)})
         return jsonify(settings=saved, checkpoints=discover_checkpoints(resolved))
 
-    @app.get("/api/factory/checkpoint")
+    @get("/api/factory/checkpoint")
     @host_only
     def factory_checkpoint():
         path = request.args.get("path", "")
         return jsonify(summarize_checkpoint(path, compute_hash=_flag(request.args.get("sha256"))))
 
-    @app.get("/api/factory/configs")
+    @get("/api/factory/configs")
     @host_only
     def factory_configs():
         return jsonify(configs=discover_configs(factory.workdir))
 
-    @app.get("/api/factory/devices")
+    @get("/api/factory/devices")
     @host_only
     def factory_devices():
         return jsonify(device_status())
 
-    @app.get("/api/factory/ports")
+    @get("/api/factory/ports")
     @host_only
     def factory_ports():
         return jsonify(ports=factory.serial_ports())
 
-    @app.post("/api/factory/serial/connect")
+    @post("/api/factory/serial/connect")
     @host_only
     def factory_serial_connect():
         payload = _payload()
         baud = int(payload.get("baud", 115200))
         return jsonify(factory.connect_serial(str(payload.get("port", "")), baud))
 
-    @app.post("/api/factory/serial/disconnect")
+    @post("/api/factory/serial/disconnect")
     @host_only
     def factory_serial_disconnect():
         return jsonify(factory.disconnect_serial())
 
-    @app.post("/api/factory/display")
+    @post("/api/factory/display")
     @host_only
     def factory_display():
         payload = _payload()
         factory.set_display(show_size_rejected=_flag(payload.get("show_size_rejected")))
         return jsonify(show_size_rejected=factory._show_rejected)
 
-    @app.post("/api/factory/start")
+    @post("/api/factory/start")
     @host_only
     def factory_start():
         payload = _payload()
@@ -112,26 +143,26 @@ def register_factory_routes(app, factory: FactoryLiveSession, host_only) -> None
                 payload[key] = _flag(payload[key])
         return jsonify(factory.start(payload)), 202
 
-    @app.post("/api/factory/stop")
+    @post("/api/factory/stop")
     @host_only
     def factory_stop():
         factory.stop()
         return jsonify(factory.snapshot(reveal_paths=True))
 
-    @app.post("/api/factory/mode")
+    @post("/api/factory/mode")
     @host_only
     def factory_mode():
         payload = _payload()
         mode = factory.set_mode(str(payload.get("mode", "")), confirm=_flag(payload.get("confirm")))
         return jsonify(mode=mode, fault=factory.fault)
 
-    @app.post("/api/factory/counters/reset")
+    @post("/api/factory/counters/reset")
     @host_only
     def factory_reset_counters():
         confirm = _flag(_payload().get("confirm"))
         return jsonify(counters=factory.reset_counters(confirm=confirm))
 
-    @app.get("/api/factory/frame.jpg")
+    @get("/api/factory/frame.jpg")
     @host_only
     def factory_frame():
         encoded = factory.frame_jpeg()
@@ -139,7 +170,7 @@ def register_factory_routes(app, factory: FactoryLiveSession, host_only) -> None
             return Response(status=204)
         return Response(encoded, mimetype="image/jpeg")
 
-    @app.get("/api/factory/crop.jpg")
+    @get("/api/factory/crop.jpg")
     @host_only
     def factory_crop():
         encoded = factory.crop_jpeg()
@@ -147,7 +178,7 @@ def register_factory_routes(app, factory: FactoryLiveSession, host_only) -> None
             return Response(status=204)
         return Response(encoded, mimetype="image/jpeg")
 
-    @app.get("/api/factory/export")
+    @get("/api/factory/export")
     @host_only
     def factory_export():
         if factory.session_dir is None:
@@ -170,14 +201,45 @@ def register_factory_routes(app, factory: FactoryLiveSession, host_only) -> None
             headers={"Content-Disposition": "attachment; filename=events.jsonl"},
         )
 
+    @post("/api/factory/preflight")
+    @host_only
+    def factory_preflight():
+        return jsonify(factory.preflight(_payload()))
 
-def register_factory_viewer(app, factory: FactoryLiveSession) -> None:
+    @post("/api/factory/controls")
+    @host_only
+    def factory_controls():
+        return jsonify(factory.update_controls(_payload()))
+
+    @post("/api/factory/playback")
+    @host_only
+    def factory_playback():
+        payload = _payload()
+        return jsonify(factory.playback(pause=payload.get("pause", payload.get("paused")), speed=payload.get("speed")))
+
+    @post("/api/factory/manual-trigger")
+    @host_only
+    def factory_manual_trigger():
+        return jsonify(factory.manual_trigger(confirm=_payload().get("confirm") is True))
+
+    if not hardware:
+        @post("/api/factory/simulate-trigger")
+        @host_only
+        def inference_simulate_trigger():
+            return jsonify(factory.simulate_trigger())
+
+
+
+def register_factory_viewer(app, factory: FactoryLiveSession, *, prefix: str = "/api/factory",
+                            hardware_enabled: bool | None = None) -> None:
     """Read-only status. No frames, serial, start, or configuration routes."""
 
-    @app.get("/api/factory/decision")
+    namespace = prefix.strip("/").replace("/", "_")
+
+    @app.get(prefix + "/decision", endpoint=namespace + "_viewer_decision")
     def factory_viewer_decision():
         return jsonify(factory.decision())
 
-    @app.get("/api/factory/status")
+    @app.get(prefix + "/status", endpoint=namespace + "_viewer_status")
     def factory_viewer_status():
         return jsonify(factory.snapshot(reveal_paths=False))

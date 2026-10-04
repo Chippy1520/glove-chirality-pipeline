@@ -10,6 +10,9 @@
 
   const token = sessionStorage.getItem("grip-lan-token") || "";
   const state = { canEdit: null, logFloor: 0, comparisonLoaded: false };
+  const auditedExtractions = new Set();
+  const previewSignatures = new Map();
+  let pollingState = false;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -17,9 +20,9 @@
     const headers = new Headers(options.headers || {});
     if (token) headers.set("X-GRIP-Token", token);
     if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    const response = await fetch(path, { ...options, headers });
+    const response = await fetch(path, { ...options, headers, signal: options.signal || AbortSignal.timeout(15000) });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `${response.status} ${response.statusText}`);
+    if (!response.ok) { const error = new Error(payload.error || `${response.status} ${response.statusText}`); error.report = payload.preflight || payload; throw error; }
     return payload;
   }
 
@@ -47,13 +50,24 @@
 
   function renderState(payload) {
     applyAccess(Boolean(payload.can_edit));
-    const pipeline = Boolean(payload.running.pipeline);
-    const tensorboard = Boolean(payload.running.tensorboard);
+    window.GripJobs.render(payload);
+    window.GripWorkstation?.render(payload);
+    const pipeline = Boolean(payload.running?.pipeline);
+    const tensorboard = Boolean(payload.running?.tensorboard);
     const pipelineJob = payload.jobs?.pipeline;
     const tensorboardJob = payload.jobs?.tensorboard;
+    state.command = pipelineJob?.command || tensorboardJob?.command;
+    if (payload.can_edit && pipelineJob?.action === 'extract_dataset' && ['completed','succeeded'].includes(pipelineJob.status) && pipelineJob.job_id && !auditedExtractions.has(pipelineJob.job_id)) {
+      auditedExtractions.add(pipelineJob.job_id);
+      const manifest = pipelineJob.result?.manifest || pipelineJob.result?.manifest_path;
+      if (manifest) $('#train-manifest').value = manifest;
+      else { const artifact = (pipelineJob.artifacts || []).find(a => a.name === 'manifest.csv'); if (artifact) $('#train-manifest').value = artifact.path; }
+      $('#dataset-summary').textContent = JSON.stringify(pipelineJob.result?.dataset_audit || pipelineJob.result?.dataset_summary || pipelineJob.result?.audit || {status:'unavailable',message:'Extraction finished; select manifest and audit the dataset.'},null,2);
+    }
+    if (payload.can_edit && pipelineJob?.action === 'audit_dataset' && pipelineJob.result && Object.keys(pipelineJob.result).length) $('#dataset-summary').textContent = JSON.stringify(pipelineJob.result,null,2);
     const jobText = (job, fallback) => {
       if (!job) return fallback;
-      const action = job.action.replaceAll("_", " ");
+      const action = (job.action || job.workflow || "job").replaceAll("_", " ");
       return `${action} · ${job.status}`;
     };
     $("#pipeline-state").textContent = jobText(pipelineJob, "Idle");
@@ -73,9 +87,12 @@
     }
 
     if (payload.can_edit) {
-      const lines = payload.logs
+      const lines = (payload.logs || [])
         .filter((entry) => entry.sequence > state.logFloor)
-        .map((entry) => `[${entry.slot === "tensorboard" ? "TensorBoard" : "Pipeline"}] ${entry.text}`);
+        .map((entry) => `[${entry.timestamp || entry.wall_time_iso || 'time unavailable'}] [${entry.severity || entry.stream || 'INFO'}] [${entry.slot === "tensorboard" ? "TensorBoard" : "Pipeline"}] ${entry.text}`);
+      [pipelineJob, tensorboardJob].filter(Boolean).forEach(job => {
+        lines.unshift(`Job ${job.job_id || 'unavailable'} | command: ${Array.isArray(job.command) ? job.command.join(' ') : job.command || 'unavailable'} | exit code: ${job.exit_code ?? 'unavailable'}`);
+      });
       const log = $("#run-log");
       const rendered = lines.length ? lines.join("\n") : "Waiting for a local command…";
       if (log.textContent !== rendered) {
@@ -88,16 +105,19 @@
   }
 
   async function pollState() {
+    if (pollingState) return;
+    pollingState = true;
     try {
       renderState(await api("/api/state"));
       if (!state.comparisonLoaded) await loadComparison();
     } catch (error) {
+      window.GripJobs.disconnected(error);
       if (state.canEdit === null) {
         setBadge($("#access-badge"), token ? "Access denied" : "Token required", "viewer");
         $("#remote-notice").hidden = false;
         $("#remote-notice").innerHTML = `<strong>LAN authentication required.</strong> Open the complete viewer URL printed on the host machine.`;
       }
-    }
+    } finally { pollingState = false; }
   }
 
   function formPayload(form) {
@@ -110,19 +130,24 @@
   }
 
   $$(".action-form").forEach((form) => {
+    form.noValidate = true;
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const button = $("button[type='submit']", form);
       button.disabled = true;
+      const submittedPreviewSignature = form.dataset.action === 'preview' ? signature() : null;
       try {
         const result = await api("/api/run", {
           method: "POST",
           body: JSON.stringify(formPayload(form)),
         });
-        toast(`${result.slot === "tensorboard" ? "TensorBoard" : "Pipeline"} started.`);
+        window.GripJobs.pending(result.job_id);
+        if (form.dataset.action === 'preview' && result.job_id) { previewSignatures.set(result.job_id,submittedPreviewSignature); if (previewSignatures.size > 50) previewSignatures.delete(previewSignatures.keys().next().value); }
+        toast("Job accepted. Preflight is checking resources.");
         location.hash = "#logs";
         await pollState();
       } catch (error) {
+        window.GripJobs.fail(error.report, form, error.message);
         toast(error.message, true);
       } finally {
         button.disabled = false;
@@ -153,6 +178,21 @@
     } catch (error) { toast(error.message, true); }
   });
 
+  async function auditDataset() {
+    const report = await api('/api/run',{method:'POST',body:JSON.stringify({action:'audit_dataset',manifest:$('#train-manifest').value,output:$('#audit-output').value})});
+    $('#dataset-summary').textContent = 'PREFLIGHT · auditing manifest, classes, image sizes and grouped split';
+    window.GripJobs.pending(report.job_id); await pollState();
+  }
+  $('#audit-dataset').addEventListener('click',() => auditDataset().catch(error => window.GripJobs.fail(error.report,$('[data-action="train"]'),error.message)));
+  $('#train-preflight').addEventListener('click',async () => { try { const report = await api('/api/jobs/preflight',{method:'POST',body:JSON.stringify(formPayload($('[data-action="train"]')))}); $('#dataset-summary').textContent = JSON.stringify(report,null,2); if (report.errors?.length || window.GripJobs.checks(report).some(c => c.status === 'failed')) window.GripJobs.fail(report,$('[data-action="train"]'),'Training resource checks failed'); } catch(error) {window.GripJobs.fail(error.report,$('[data-action="train"]'),error.message);} });
+  ['Copy log','Download log','Copy command'].forEach((label,index) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.textContent = label; $('.log-toolbar').append(button); button.addEventListener('click',async () => { const text = index === 2 ? (Array.isArray(state.command) ? state.command.map(argument => /\s/.test(argument) ? JSON.stringify(argument) : argument).join(' ') : state.command || 'Command unavailable') : $('#run-log').textContent; if (index !== 1) { try {await navigator.clipboard.writeText(text); toast(`${label} complete.`);} catch(error) {toast('Clipboard unavailable. Select the log text.',true);} } else { const url = URL.createObjectURL(new Blob([text],{type:'text/plain'})); const link = document.createElement('a'); link.href = url; link.download = 'grip-run.log'; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000); } }); });
+  const signature = () => JSON.stringify([$('#config-path').value,$('#config-editor').value,formPayload($('[data-action="preview"]'))]);
+  let approvedSignature = '';
+  const invalidateGeometry = () => { if (approvedSignature !== signature()) { approvedSignature = ''; $('#geometry-approval').textContent = 'Approval invalidated by configuration changes. Render and inspect a new preview.'; } };
+  ['config-path','config-editor'].forEach(id => ['input','change'].forEach(type => document.getElementById(id).addEventListener(type,invalidateGeometry)));
+  ['input','change'].forEach(type => $('[data-action="preview"]').addEventListener(type,invalidateGeometry));
+  $('#approve-geometry').addEventListener('click',() => { const image = document.querySelector('#job-result .artifact-preview[data-workflow="preview"]'); if (!image || !image.complete || !image.naturalWidth || previewSignatures.get(image.dataset.jobId) !== signature() || $('[data-action="preview"]').elements.config.value !== $('#config-path').value) {toast('Render and inspect a loaded calibration preview for this exact config and geometry first.',true); return;} approvedSignature = signature(); $('#geometry-approval').textContent = `Geometry review recorded for ${$('#config-path').value}. Approval invalidates on edits; not production certification.`; });
+
   async function loadConfig() {
     const path = $("#config-path").value.trim();
     try {
@@ -160,6 +200,7 @@
       $("#config-path").value = payload.path;
       $("#config-editor").value = payload.text;
       toast("Configuration loaded and validated.");
+      invalidateGeometry();
     } catch (error) { toast(error.message, true); }
   }
 
@@ -188,12 +229,13 @@
         });
         $("#config-editor").value = payload.text;
         toast("Preset applied in the editor. Review, then validate and save.");
+        invalidateGeometry();
       } catch (error) { toast(error.message, true); }
     });
   });
 
   function metric(value) {
-    return Number.isFinite(Number(value)) ? Number(value).toFixed(4) : "—";
+    return value != null && value !== '' && Number.isFinite(Number(value)) ? Number(value).toFixed(4) : "—";
   }
 
   async function loadComparison() {
@@ -227,7 +269,7 @@
           metric(run.recall_left),
           metric(run.recall_right),
           run.validation_samples ?? "—",
-          run.source,
+          state.canEdit ? run.source : "Host artifact",
         ].forEach((value) => {
           const cell = row.insertCell();
           cell.textContent = value;
@@ -256,6 +298,7 @@
   let pathTarget = null;
   let pathKind = "file";
   let currentPath = "";
+  window.GripBrowse = (target, kind = 'directory') => { pathTarget = target; pathKind = kind; pathDialog.showModal(); browsePath(target.value); };
 
   async function browsePath(path = "") {
     try {
@@ -275,6 +318,7 @@
           if (entry.is_directory) browsePath(entry.path);
           else if (pathKind === "file") {
             pathTarget.value = entry.path;
+            pathTarget.dispatchEvent(new Event('change', {bubbles:true}));
             pathDialog.close();
           }
         });
@@ -293,7 +337,7 @@
   });
   $("#path-parent").addEventListener("click", (event) => browsePath(event.currentTarget.dataset.path));
   $("#path-use-folder").addEventListener("click", () => {
-    if (pathTarget) pathTarget.value = currentPath;
+    if (pathTarget) { pathTarget.value = currentPath; pathTarget.dispatchEvent(new Event('change', {bubbles:true})); }
     pathDialog.close();
   });
   $("#path-close").addEventListener("click", () => pathDialog.close());

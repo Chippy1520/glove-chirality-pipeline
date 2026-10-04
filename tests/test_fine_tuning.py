@@ -165,8 +165,10 @@ def test_training_metadata_and_tensorboard(torch, tmp_path, monkeypatch, warmup)
     ))
     monkeypatch.setattr(training, "build_model", lambda *args, **kw: fixture_model(torch))
     output = tmp_path / "fixture.pt"
+    manifest = tmp_path / "fixture.csv"
+    manifest.write_text("label,source_video\nleft,left\nright,right\n", encoding="utf-8")
     summary = training.train_classifier(
-        "fixture.csv", output, epochs=2, head_only_epochs=warmup,
+        manifest, output, epochs=2, head_only_epochs=warmup,
         learning_rate=0.01, device_name="cpu", tensorboard_logdir=tmp_path / "tb",
     )
     checkpoint = torch.load(output, weights_only=True)

@@ -13,6 +13,7 @@
   <script defer src="{{ url_for('static', filename='app.js') }}"></script>
   <script defer src="{{ url_for('static', filename='inference.js') }}"></script>
   <script defer src="{{ url_for('static', filename='factory.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='interface.js') }}"></script>
 </head>
 <body data-local="{{ 'true' if initial_can_edit else 'false' }}">
   <a class="skip-link" href="#overview">Skip to workspace</a>
@@ -33,19 +34,24 @@
       <a class="nav-link active" href="#overview" aria-current="page"><span>01</span>Overview</a>
       <a class="nav-link" href="#factory"><span>FL</span>Factory Live</a>
       <a class="nav-link host-only" href="#extract"><span>02</span>Extract</a>
-      <a class="nav-link host-only" href="#layer-one"><span>03</span>Layer 1</a>
       <a class="nav-link host-only" href="#train"><span>04</span>Train</a>
       <a class="nav-link host-only" href="#infer"><span>05</span>Infer</a>
-      <a class="nav-link host-only" href="#explain"><span>06</span>Explain</a>
-      <a class="nav-link" href="#compare"><span>07</span>Compare</a>
-      <a class="nav-link host-only" href="#logs"><span>08</span>Run log</a>
+      <details class="nav-tools">
+        <summary>Tools</summary>
+        <div class="nav-tools-links">
+          <a class="nav-link host-only" href="#layer-one">Layer 1 settings</a>
+          <a class="nav-link host-only" href="#explain">Explain a prediction</a>
+          <a class="nav-link" href="#compare">Compare models</a>
+          <a class="nav-link host-only" href="#logs">Run log & diagnostics</a>
+        </div>
+      </details>
     </nav>
 
     <main>
       <section id="overview" class="page-section">
         <div class="section-heading">
-          <div><p class="eyebrow">System overview</p><h1>Passage extraction and chirality analysis</h1></div>
-          <p class="lede">A local-first workstation. Detection, event extraction, and classification continue to run through the reproducible CLI.</p>
+          <div><p class="eyebrow">GRIP workstation</p><h1>Choose your next task</h1></div>
+          <p class="lede">Prepare data, train a classifier, or inspect gloves. Each workflow uses the same pipeline.</p>
         </div>
         <div id="remote-notice" class="notice info" hidden>
           <strong>Read-only LAN view.</strong> Filesystem paths, configuration, raw logs, TensorBoard, and execution controls remain available only on the host machine.
@@ -54,7 +60,11 @@
           <article class="metric-card"><span>Pipeline</span><strong id="pipeline-state">Idle</strong><small>One extraction, training, or inference task</small></article>
           <article class="metric-card"><span>TensorBoard</span><strong id="tensorboard-state">Idle</strong><small>Independent host-only process</small></article>
           <article class="metric-card"><span>Historical runs</span><strong id="run-count">—</strong><small>Compatible metric artifacts</small></article>
-          <article class="metric-card"><span>Priority metric</span><strong>Right recall</strong><small>Review with left false alarms</small></article>
+        </div>
+        <div class="quick-actions host-only">
+          <a class="panel" href="#factory"><h2>Inspect gloves</h2><p>Camera or video, starting safely in shadow mode.</p></a>
+          <a class="panel" href="#extract"><h2>Prepare a dataset</h2><p>Extract one crop per observed glove crossing.</p></a>
+          <a class="panel" href="#layer-one"><h2>Configure Layer 1</h2><p>Load a detector configuration and review geometry.</p></a>
         </div>
 
         <article id="lan-share-panel" class="panel qr-panel host-only" hidden>
@@ -69,7 +79,8 @@
           <img id="lan-viewer-qr" alt="QR code for the authenticated read-only LAN viewer">
         </article>
 
-        <article class="panel host-only">
+        <details class="panel options host-only">
+          <summary>TensorBoard · training diagnostics</summary>
           <div class="panel-heading"><div><p class="eyebrow">Local diagnostics</p><h2>TensorBoard</h2></div><span class="local-chip">Host only</span></div>
           <form class="action-form compact-form" data-action="tensorboard">
             <label class="field grow"><span>Log directory</span><span class="input-row"><input id="tb-logdir" name="logdir" value="outputs/tensorboard" required><button type="button" class="icon-button browse" data-target="tb-logdir" data-kind="directory">Browse</button></span></label>
@@ -78,7 +89,7 @@
             <button class="button" type="button" id="open-tensorboard">Open dashboard</button>
             <button class="button danger" type="button" data-stop="tensorboard">Stop</button>
           </form>
-        </article>
+        </details>
       </section>
 
       {% include "factory.html" %}

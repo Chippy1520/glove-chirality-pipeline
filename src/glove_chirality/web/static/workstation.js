@@ -16,7 +16,7 @@
     summary.hidden = document.body.dataset.local !== 'true';
     summary.append(node('h3', 'Dataset summary'), node('p', 'Validate the selected manifest before training. Counts and split are calculated by the server.'));
     const details = node('div', '', 'telemetry-grid'); details.id = 'dataset-summary-cards'; summary.append(details);
-    const validate = node('button', 'Audit dataset / validate settings'); validate.type = 'button'; summary.append(validate);
+    const validate = node('button', 'Validate dataset', 'button'); validate.type = 'button'; summary.append(validate);
     training.before(summary);
     let version = 0;
     training.elements.manifest.addEventListener('input', () => { version += 1; details.replaceChildren(node('p', 'Manifest changed — validate again.')); });
@@ -48,7 +48,7 @@
   const monitor = node('details', '', 'workstation-monitor'); monitor.id = 'workstation-monitor';
   monitor.append(node('summary', 'Real-time monitoring · expand for metrics'));
   const monitorCards = node('div', '', 'telemetry-grid'); monitor.append(monitorCards);
-  $('main')?.prepend(monitor);
+  $('#logs')?.append(monitor);
   function render(state) {
     const pipeline = state.jobs?.pipeline;
     if (pipeline?.action === 'train' && pipeline.preflight?.dataset) showDataset(pipeline.preflight.dataset);

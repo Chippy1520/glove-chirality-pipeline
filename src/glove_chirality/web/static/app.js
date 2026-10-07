@@ -44,6 +44,7 @@
     state.canEdit = canEdit;
     document.body.dataset.local = String(canEdit);
     $$(".host-only").forEach((element) => { element.hidden = !canEdit; });
+    window.GripInterface?.refresh();
     $("#remote-notice").hidden = canEdit;
     setBadge($("#access-badge"), canEdit ? "Host controls" : "LAN viewer", canEdit ? "local" : "viewer");
   }
@@ -342,17 +343,6 @@
   });
   $("#path-close").addEventListener("click", () => pathDialog.close());
 
-  const observer = new IntersectionObserver((entries) => {
-    const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-    if (!visible) return;
-    $$(".nav-link").forEach((link) => {
-      const active = link.hash === `#${visible.target.id}`;
-      link.classList.toggle("active", active);
-      if (active) link.setAttribute("aria-current", "page");
-      else link.removeAttribute("aria-current");
-    });
-  }, { rootMargin: "-20% 0px -65%", threshold: [0, 0.2, 0.5] });
-  $$(".page-section").forEach((section) => observer.observe(section));
 
   pollState().then(() => {
     if (state.canEdit) loadConfig();

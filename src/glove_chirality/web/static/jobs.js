@@ -25,7 +25,7 @@
     if (!dialog.open) dialog.showModal();
   }
   $('#job-cancel').onclick = () => dialog.close();
-  $('#job-fix').onclick = () => { dialog.close(); const field = highlighted[0]; if (field) { field.closest('details')?.setAttribute('open',''); field.focus(); field.scrollIntoView({block:'center'}); } else failedForm?.scrollIntoView({block:'center'}); };
+  $('#job-fix').onclick = () => { dialog.close(); const field = highlighted[0]; window.GripInterface?.reveal(field || failedForm); if (field) { field.closest('details')?.setAttribute('open',''); field.focus(); field.scrollIntoView({block:'center'}); } else failedForm?.scrollIntoView({block:'center'}); };
   $('#job-retry').onclick = () => { dialog.close(); if (retryAction) retryAction(); else if (failedForm?.id === 'factory') $('#factory-start').click(); else failedForm?.requestSubmit?.(); };
   $('#job-log').onclick = () => { dialog.close(); location.hash = '#logs'; };
   const output = document.createElement('article'); output.id = 'job-result'; output.className = 'panel host-only'; output.hidden = true; $('#logs').prepend(output);
@@ -37,7 +37,7 @@
     const pre = document.createElement('pre'); pre.textContent = JSON.stringify(job.result || {}, null, 2); output.append(pre);
     if (job.output) { const path = document.createElement('input'); path.value = job.output; path.readOnly = true; path.setAttribute('aria-label','Job output location'); const browse = document.createElement('button'); browse.className = 'button'; browse.textContent = 'Browse output location'; browse.onclick = () => window.GripBrowse(path); output.append(path,browse); }
     const checkpoint = job.result?.best_checkpoint || job.result?.checkpoint || (job.artifacts || []).find(a => a.kind === 'checkpoint' || /\.(pt|pth)$/i.test(a.name || ''))?.path;
-    if (checkpoint) { const button = document.createElement('button'); button.className = 'button'; button.textContent = 'Run on test video'; button.onclick = () => { document.querySelectorAll('#infer [name="checkpoint"]').forEach(field => {field.value = checkpoint;}); $('#visual-checkpoint').value = checkpoint; $('#visual-form').elements.source_type.value = 'video'; if ($('#visual-source').value === '0') $('#visual-source').value = ''; location.hash = '#infer'; $('#visual-source').focus(); }; output.append(button); }
+    if (checkpoint) { const button = document.createElement('button'); button.className = 'button'; button.textContent = 'Run on test video'; button.onclick = () => { document.querySelectorAll('#infer [name="checkpoint"]').forEach(field => {field.value = checkpoint;}); $('#visual-checkpoint').value = checkpoint; $('#visual-form').elements.source_type.value = 'video'; if ($('#visual-source').value === '0') $('#visual-source').value = ''; window.GripInterface?.reveal($('#visual-source')); location.hash = '#infer'; $('#visual-source').focus(); }; output.append(button); }
     (job.artifacts || []).forEach((artifact,index) => {
       const artifactUrl = artifact.url || (job.job_id ? `/api/jobs/${encodeURIComponent(job.job_id)}/artifacts/${index}` : null);
       if (!artifactUrl) { const p = document.createElement('p'); p.textContent = `${artifact.name || artifact.path}: host download URL unavailable`; output.append(p); return; }
@@ -50,8 +50,17 @@
     const jobs = Object.values(payload.jobs || {}).filter(Boolean);
     const statusItems = [...jobs,...[payload.factory,payload.inference].filter(Boolean)];
     bar.classList.remove('connection-lost');
-    bar.textContent = statusItems.map(job => `${job.job_id || 'ID unavailable'} · ${(job.action || job.workflow || 'job').replaceAll('_',' ')} · ${(job.status || 'unavailable').toUpperCase()} · ${job.current_stage || job.stage || 'stage unavailable'} · elapsed ${job.elapsed_time ?? job.elapsed ?? job.elapsed_s ?? 'unavailable'} · progress ${job.progress == null ? 'unavailable' : typeof job.progress === 'object' ? JSON.stringify(job.progress) : job.progress}`).join(' | ') || 'No active job';
-    bar.textContent += ` | GPU ${payload.gpu?.name || payload.gpu?.status || 'unavailable'} | Factory ${(payload.factory?.status || 'unavailable').toUpperCase()} | Alerts ${$('#enable-alerts').textContent}`;
+    const active = statusItems.filter(job => job.running || ['queued','preflight','starting','loading','running','stopping'].includes(String(job.status).toLowerCase()));
+    const failed = statusItems.find(job => job.fault || job.error || ['failed','faulted','error'].includes(String(job.status).toLowerCase()));
+    const summary = job => {
+      const parts = [(job.action || job.workflow || 'Workflow').replaceAll('_',' '), String(job.status || 'running').toUpperCase()];
+      if (job.mode) parts.push(String(job.mode).toUpperCase());
+      if (job.current_stage || job.stage) parts.push(job.current_stage || job.stage);
+      if (job.progress?.epoch) parts.push(`Epoch ${job.progress.epoch} / ${job.progress.epochs || '—'}`);
+      return parts.join(' · ');
+    };
+    const activity = active.map(summary).join(' | ');
+    bar.textContent = failed ? `Needs attention · ${summary(failed)}${activity ? ` | ${activity}` : ''}` : activity || 'Ready · no active workflows';
     const inference = payload.inference;
     (inference?.events || []).forEach(event => { if (!event.event_id) return; const key = `inference:${inference.session_id || inference.job_id || inference.started_at || ''}:${event.event_id}`; if (!bootstrapped) window.GripAlerts.remember(key); else if (event.status === 'accepted' && event.prediction === (inference.reject_class || 'right')) window.GripAlerts.tone('reject',key); });
     jobs.forEach(job => {

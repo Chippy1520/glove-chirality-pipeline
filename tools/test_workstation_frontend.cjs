@@ -12,7 +12,7 @@ async function main() {
  const w = dom.window, calls = [], timers = [], failures = []; let state = {can_edit:true,running:{},jobs:{},logs:[]};
  w.Headers = Headers; w.AbortSignal = AbortSignal; w.HTMLElement.prototype.scrollIntoView = function(){};
  w.HTMLDialogElement.prototype.showModal = function(){this.open=true;}; w.HTMLDialogElement.prototype.close = function(){this.open=false;};
- w.IntersectionObserver = class {observe(){}}; w.alert = message => failures.push(message); w.confirm = () => true;
+ w.scrollTo = () => {}; w.matchMedia = () => ({matches:true}); w.alert = message => failures.push(message); w.confirm = () => true;
  w.setInterval = (fn,ms) => {timers.push({fn,ms});return timers.length;}; w.setTimeout = () => 1;
  w.fetch = async (url,options={}) => {
   calls.push({url,options}); let payload = {};
@@ -30,12 +30,42 @@ async function main() {
  let resumes=0, contexts=0, tones=0;
  w.AudioContext=class {constructor(){contexts++;this.state='suspended';this.currentTime=0;this.destination={};} async resume(){resumes++;this.state='running';} createOscillator(){return {frequency:{},connect(){return {connect(){}};},start(){tones++;},stop(){}};} createGain(){return {gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}}};}};
  for(const file of ['alerts.js','jobs.js','workstation.js','app.js','inference.js','factory.js']) w.eval(fs.readFileSync(path.join(root,'static',file),'utf8'));
+ const formValues = () => [...w.document.querySelectorAll('form')].map(form => [...form.elements].filter(el => el.name).map(el => [el.name,el.value,el.checked ?? null]).sort((a,b) => a[0].localeCompare(b[0])));
+ const beforePresentation = formValues();
+ w.eval(fs.readFileSync(path.join(root,'static/interface.js'),'utf8'));
+ assert.deepEqual(formValues(),beforePresentation,'disclosure preserves every named control and value');
  w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
  const flush=async()=>{for(let i=0;i<15;i++)await Promise.resolve();}; await flush();
  assert.equal(w.sessionStorage.getItem('grip-lan-token'),'test-token');
  assert(w.document.querySelectorAll('.action-form').length>=9,'existing workflows retained');
  assert([...w.document.querySelectorAll('.action-form')].every(f=>f.noValidate),'collect all server validation errors');
  const form = w.document.querySelector('[data-action="train"]');
+ const visibleSections = () => [...w.document.querySelectorAll('main > .page-section')].filter(el => !el.hidden).map(el => el.id);
+ assert.deepEqual(visibleSections(),['overview']);
+ for(const id of ['factory','extract','layer-one','train','infer','explain','compare','logs']) {
+  w.GripInterface.reveal(w.document.querySelector(`#${id} h1`));
+  assert.deepEqual(visibleSections(),[id],'one visible workflow');
+  assert.equal(w.document.querySelector('.nav-link[aria-current="page"]').hash,`#${id}`);
+ }
+ assert.equal(form.elements.learning_rate.closest('details').open,false);
+ w.GripJobs.fail({checks:[{field:'learning_rate',status:'failed',message:'Invalid rate'}]},form,'Invalid rate');
+ w.document.querySelector('#job-fix').click();
+ w.dispatchEvent(new w.Event('hashchange'));
+ assert.equal(form.elements.learning_rate.closest('details').open,true,'fix reveals advanced fields');
+ assert.equal(w.document.activeElement,form.elements.learning_rate);
+ assert.deepEqual(visibleSections(),['train']);
+ form.elements.learning_rate.closest('details').open=false;
+ assert.equal(w.document.querySelector('#factory-mode').value,'shadow');
+ assert.equal(w.document.querySelector('#factory-manual-trigger').disabled,true);
+ assert.equal(w.document.querySelector('#factory-amp').checked,false);
+ w.document.querySelector('.nav-tools').open=true;
+ w.location.hash='#compare'; w.dispatchEvent(new w.Event('hashchange'));
+ assert.equal(w.document.querySelector('.nav-tools').open,false,'mobile tools close after navigation');
+ assert.equal(w.document.querySelector('.nav-tools').classList.contains('active'),true);
+ w.GripJobs.render({factory:{status:'idle'},inference:{status:'idle'}});
+ assert.equal(w.document.querySelector('#global-status').textContent,'Ready · no active workflows');
+ w.GripJobs.render({factory:{status:'faulted',fault:'fixture failure'}});
+ assert.match(w.document.querySelector('#global-status').textContent,/Needs attention/);
  w.GripJobs.fail({checks:[{field:'manifest',status:'failed',message:'missing manifest'},{field:'output',status:'failed',message:'missing output'}]},form,'preflight failed');
  assert(form.elements.manifest.classList.contains('invalid-field'));
  assert(form.elements.output.classList.contains('invalid-field'));
@@ -60,6 +90,8 @@ async function main() {
  assert.equal(w.document.querySelector('#visual-checkpoint').value,'fixture/candidate.pt');
  assert.equal(w.document.querySelector('#visual-form').elements.source_type.value,'video');
  assert.equal(w.document.querySelector('#visual-source').value,'','camera index is not reused as a video path');
+ w.dispatchEvent(new w.Event('hashchange'));
+ assert.equal(w.document.activeElement,w.document.querySelector('#visual-source'),'result shortcut keeps source focus after routing');
  w.document.querySelector('#visual-form').dispatchEvent(new w.Event('submit',{cancelable:true})); await flush();
  const inference=calls.find(c=>c.url==='/api/inference/start'); assert(inference); assert.equal(JSON.parse(inference.options.body).mode,'shadow'); assert.equal(JSON.parse(inference.options.body).amp,false);
  w.document.querySelector('#factory-decision-label').textContent='WAITING';
@@ -78,12 +110,16 @@ async function main() {
  assert.equal(w.document.querySelector('#factory-events tr'),passageRow,'passage rows retained for ACK updates');
  assert.match(passageRow.textContent,/ACK OK/);
  w.document.body.dataset.local='false';
+ w.location.hash='#train'; w.GripInterface.refresh();
+ assert.deepEqual(visibleSections(),['overview'],'host route unavailable to viewer');
+ w.location.hash='#factory'; w.GripInterface.refresh();
+ assert.deepEqual(visibleSections(),['factory'],'read-only factory route retained');
  const beforeViewer=calls.length; await timers.find(t=>t.ms===700).fn(); await timers.find(t=>t.ms===400).fn();
  assert(!calls.slice(beforeViewer).some(call=>/frame.jpg|crop.jpg|configs|checkpoints/.test(call.url)),'viewer never requests frames or host paths');
  assert(w.document.querySelector('#factory-preview').hidden);
  w.GripJobs.fail({checks:[{field:'secret',status:'failed',message:'secret path'}]},form,'private failure');
  assert(!w.document.querySelector('#job-error').open,'viewer cannot open raw diagnostic modal');
  assert.equal(failures.length,0);
- dom.window.close(); console.log('PASS: frontend DOM contracts, scoped fixes, async preflight, shared audio, safe inference, accepted reject gating, stable ACK rows and viewer isolation.');
+ dom.window.close(); console.log('PASS: preserved form values, single-workflow navigation, advanced-field fixes, safe defaults, DOM contracts, preflight, audio, inference, reject/ACK gating and viewer isolation.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

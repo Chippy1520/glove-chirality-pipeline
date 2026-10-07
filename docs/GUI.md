@@ -41,7 +41,42 @@ LAN clients can view process state and historical comparison metrics. They canno
 
 These restrictions are structural: the LAN application does not register mutation, path, configuration, raw-log, or TensorBoard routes. LAN mode still uses plain HTTP, so it is intended only for a trusted private network where token sniffing is not a concern. Do not expose it through port forwarding, a public interface, or an untrusted network.
 
-## Tabs
+## Focused workflows
+
+The workstation shows **one workflow at a time** instead of stacking every form
+on a single long page. Overview, Factory Live, Extract, Train and Infer are the
+primary navigation. **Tools** contains Layer 1 settings, explanation, model
+comparison and the run log. Existing hash links and browser Back/Forward remain
+supported; the mobile Tools menu closes after navigation so it cannot cover
+workspace controls.
+
+- Overview provides task shortcuts; TensorBoard controls are collapsed by default.
+- Train initially shows manifest, output, architecture, device, epochs and batch
+  size. Learning-rate, augmentation, split, loss and loader settings remain under
+  **Advanced training settings**. Dataset auditing is retained.
+- Infer puts shadow-only visual testing first; batch commands and file exports
+  remain under **Batch inference and file exports**.
+- Factory Live keeps source, checkpoint, extraction config and operating mode
+  visible. Camera, model/device, decision/geometry, actuator and session options
+  are grouped in collapsed sections. Detailed timing and rejection metrics remain
+  available alongside session diagnostics. Processed FPS and dropped frames stay
+  visible in the main metrics.
+- The status strip shows current activity or faults without dumping raw progress
+  JSON. Detailed telemetry remains in **Run log & diagnostics**.
+
+Disclosure only reorganizes existing controls: values, request payloads and
+server validation are unchanged. **Fix all fields** reveals the failed workflow
+and opens every enclosing advanced section before focusing the invalid field.
+Shadow defaults, physical-actuation confirmation, host-only controls and LAN
+restrictions are unchanged. No extraction, model, precision or geometry defaults
+are altered by this interface simplification.
+
+Frontend contracts are verified with `npm run test:frontend`. Real Chromium
+acceptance also exercises all nine workflows at desktop, tablet and phone widths,
+file browsing, collapsed-field recovery, ARMED cancellation and browser history;
+it does not start inference or activate machinery.
+
+## Workflow reference
 
 ### Extract
 

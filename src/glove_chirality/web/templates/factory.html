@@ -88,7 +88,7 @@
         <small class="field-help">Only relevant when using a recall-priority class. Lowering the RIGHT threshold can reduce missed right gloves but increases false rejects.</small>
       </label>
       <p class="field-help">GRIP production direction: Bottom → Top. The trigger line is horizontal.</p>
-      <details class="field">
+      <details class="field" id="factory-direction-options">
         <summary>Advanced belt direction</summary>
         <label class="field"><span>Belt direction</span>
           <select id="factory-belt-direction"><option>bottom_to_top</option><option>top_to_bottom</option><option>left_to_right</option><option>right_to_left</option></select>
@@ -144,6 +144,7 @@
         <button id="factory-expand" class="button" type="button">Expand Preview</button>
       </div>
       <img id="factory-preview" class="factory-preview" alt="Live inspection preview">
+      <p class="preview-placeholder">Start an inspection session to see the camera or video here.</p>
       <p id="factory-capture-info" class="field-help">Capture: waiting</p>
       <p id="factory-yolo-counts" class="field-help">YOLO raw: — · size rejected: — · kept: — · eligible: —</p>
       <p id="factory-position" class="field-help">Position: waiting for a detection</p>

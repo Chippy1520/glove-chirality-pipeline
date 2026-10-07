@@ -172,6 +172,9 @@ Use `pytest`; parameterize frame-boundary cases and seed random/property tests.
 
 ### 4.2 Deployment path
 
+- [ ] Layer 1 iterations verify the four/nineteen black-glove videos; approximately every fifth iteration and before final acceptance, verify the fifty-five-glove video with its matching green weights/config. Check content hashes, not filenames alone.
+- [ ] Strict crossing mode reports `born_past_line` and `lost_before_trigger` as explicit rejections; startup/EOF gloves without observed crossings do not receive fallback crops or inflate accepted counts.
+- [ ] FP16 acceptance audits missed/duplicate passages and actual crop contents against FP32; startup/EOF boundary failures remain explicit, and extraction accuracy is not presented as chirality accuracy.
 - [ ] Bounded live capture never exceeds its configured queue, reports stale-frame drops, and classifies exactly once per accepted passage rather than once per frame.
 - [ ] Live JSONL/event callbacks contain full-frame geometry, detector/config/model metadata, confidence, timing, and no prediction for rejected passages.
 - [ ] Runtime-only display/reporting/queue/warm-up settings do not alter the extraction config hash; detection frequency and crop semantics do.

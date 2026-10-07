@@ -266,7 +266,7 @@ def keep_selected_mask(
         return crop
     keep = np.zeros(crop.shape[:2], dtype=np.uint8)
     _paint(keep, target, origin[0], origin[1])
-    crop[keep == 0] = fill
+    crop[...] = cv2.copyTo(crop, keep, np.full_like(crop, fill))
     return crop
 
 

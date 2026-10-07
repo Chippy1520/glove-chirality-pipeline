@@ -55,6 +55,7 @@ def test_factory_yaml_uses_grip_geometry_without_absolute_paths():
     assert config.detector.roi == (0.12, 0.03, 0.98, 0.995)
     assert config.detector.trigger_zone == (0.39, 0.04, 0.92, 0.93)
     assert config.event.belt_direction == "bottom_to_top"
+    assert config.event.tracker_mode == "line"
     assert config.detector.yolo_imgsz == 640
     assert config.event.output_size == 256
     assert config.event.letterbox_fill == 114

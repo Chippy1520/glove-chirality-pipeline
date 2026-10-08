@@ -10,7 +10,7 @@ ColumnLayout {
     property var latest: session.latest || ({})
     property bool shadowOnly: client.previewSession === "inference"
     property string pendingMode: "shadow"
-    property bool startAfterArm: false
+    property string checkedStartupJob: ""
     property var catalogItems: []
     property string catalogField: ""
     property bool audioEnabled: false
@@ -22,8 +22,16 @@ ColumnLayout {
     function startSession(confirmArmed) {
         const payload = Object.assign({}, setupForm.values)
         payload.confirm_armed = confirmArmed
-        if (shadowOnly) payload.mode = "shadow"
+        if (shadowOnly || payload.mode === "armed") payload.mode = "shadow"
         client.request("start-session", "/api/" + client.previewSession + "/start", "POST", payload)
+    }
+    onSessionChanged: {
+        const job = client.previewSession + ":" + String(session.job_id || "")
+        const checks = (session.preflight || {}).checks || []
+        if (session.status === "fault" && job !== checkedStartupJob && checks.some(check => check.status === "failed")) {
+            checkedStartupJob = job
+            Qt.callLater(function() { setupForm.applyErrors(session); setupDialog.open() })
+        }
     }
     onLatestChanged: {
         const id = String(session.session_id || "") + ":" + String(latest.event_id || "")
@@ -45,7 +53,7 @@ ColumnLayout {
             objectName: "operatingMode"
             model: inspect.shadowOnly ? ["SHADOW"] : ["PREVIEW", "SHADOW", "ARMED"]
             currentIndex: inspect.shadowOnly ? 0 : model.indexOf(String(inspect.session.mode || setupForm.values.mode || "shadow").toUpperCase())
-            enabled: client.ready
+            enabled: client.ready && Boolean(inspect.session.running) && inspect.session.status === "running"
             onActivated: {
                 inspect.pendingMode = currentText.toLowerCase()
                 if (inspect.pendingMode === "armed") armDialog.open()
@@ -59,10 +67,7 @@ ColumnLayout {
             font.weight: Font.DemiBold
             Layout.fillWidth: true
         }
-        Button { text: "Start"; highlighted: true; enabled: client.ready && !inspect.session.running; onClicked: {
-            if (setupForm.values.mode === "armed" && !inspect.shadowOnly) { inspect.startAfterArm = true; armDialog.open() }
-            else inspect.startSession(false)
-        } }
+        Button { text: "Start"; highlighted: true; enabled: client.ready && !inspect.session.running; onClicked: inspect.startSession(false) }
         Button { text: "Stop"; enabled: client.ready && Boolean(inspect.session.running); onClicked: client.request("stop-session", "/api/"+client.previewSession+"/stop", "POST", {}) }
     }
     Label {
@@ -124,7 +129,7 @@ ColumnLayout {
             anchors.fill: parent; clip: true
             ColumnLayout {
                 width: parent.width - 20; spacing: 16
-                Label { text: "Source/model/config/geometry changes require a stopped session. Advanced settings retain the complete validated contract."; wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#667085" }
+                Label { text: "Source/model/config/geometry changes require a stopped session. Start is non-actuating; select ARMED only after the running session passes readiness. Advanced settings retain the complete validated contract."; wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#667085" }
                 WorkflowForm {
                     id: setupForm
                     Layout.fillWidth: true
@@ -153,11 +158,9 @@ ColumnLayout {
         standardButtons: Dialog.Ok | Dialog.Cancel
         Label { text: "ARMED can move machinery. Confirm shadow validation is complete, serial readiness is verified, and the actuator area is clear.\nAlready-sent firmware delays cannot be recalled."; wrapMode: Text.Wrap; width: 440; color: "#b42318" }
         onAccepted: {
-            if (inspect.startAfterArm) { inspect.startAfterArm = false; inspect.startSession(true) }
-            else if (inspect.session.running) client.request("arm", "/api/factory/mode", "POST", {mode:"armed",confirm_armed:true})
-            else setupForm.setValue("mode", "armed")
+            if (inspect.session.running) client.request("arm", "/api/factory/mode", "POST", {mode:"armed",confirm:true})
         }
-        onRejected: { inspect.startAfterArm = false; setupForm.setValue("mode", "shadow"); operatingMode.currentIndex = inspect.shadowOnly ? 0 : 1 }
+        onClosed: operatingMode.currentIndex = Qt.binding(function() { return inspect.shadowOnly ? 0 : operatingMode.model.indexOf(String(inspect.session.mode || "shadow").toUpperCase()) })
     }
     Dialog {
         id: expandedPreview
@@ -180,7 +183,7 @@ ColumnLayout {
                     Button { text: "Pause"; onClicked: client.request("playback", "/api/"+client.previewSession+"/playback", "POST", {pause:true}) }
                     Button { text: "Resume"; onClicked: client.request("playback", "/api/"+client.previewSession+"/playback", "POST", {pause:false}) }
                     ComboBox { model: ["0.25", "0.5", "1", "2"]; currentIndex: 2; onActivated: client.request("playback", "/api/"+client.previewSession+"/playback", "POST", {speed:Number(currentText)}) }
-                    Button { text: "Reset counters"; onClicked: client.request("reset", "/api/"+client.previewSession+"/counters/reset", "POST", {}) }
+                    Button { text: "Reset counters"; onClicked: resetCounters.open() }
                 }
                 RowLayout {
                     Button { text: "Serial ports"; enabled: !inspect.shadowOnly; onClicked: client.request("ports", "/api/factory/ports") }
@@ -201,6 +204,14 @@ ColumnLayout {
                 TextArea { Layout.fillWidth: true; text: JSON.stringify(inspect.session,null,2); readOnly: true; wrapMode: Text.WrapAnywhere; font.family: "Consolas"; font.pixelSize: 12 }
             }
         }
+    }
+    Dialog {
+        id: resetCounters
+        title: "Reset session counters?"
+        modal: true; anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        Label { width: 440; wrapMode: Text.Wrap; text: "Reset displayed counters for this session? Existing event logs remain unchanged." }
+        onAccepted: client.request("reset", "/api/"+client.previewSession+"/counters/reset", "POST", {confirm:true})
     }
     Dialog {
         id: physicalTest

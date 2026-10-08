@@ -74,6 +74,7 @@ private:
     void send(const QString &, const QString &, const QVariantMap &, Handler);
     void poll();
     void fetchFrame();
+    void clearPreview();
     void setStatus(const QString &);
     FrameProvider *frames_;
     QNetworkAccessManager network_;
@@ -83,8 +84,8 @@ private:
     QSoundEffect tone_;
     QElapsedTimer startup_;
     QString baseUrl_, token_, status_ = "Starting the isolated processing worker…";
-    QString previewSession_ = "factory";
+    QString previewSession_ = "factory", previewKey_, workdir_;
     QVariantMap schema_, snapshot_;
     bool ready_ = false, closing_ = false, stateBusy_ = false, frameBusy_ = false, previewEnabled_ = true;
-    int frameRevision_ = 0, artifactRevision_ = 0;
+    int frameRevision_ = 0, artifactRevision_ = 0, previewGeneration_ = 0;
 };

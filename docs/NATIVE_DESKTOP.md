@@ -88,8 +88,22 @@ python tools/verify_native_package.py
 
 The package verifier launches the frozen worker with Python/Qt environment overrides
 removed and exercises synthetic extraction/audit, preview, CPU training, image/video
-inference, explanation, shadow-only playback and shutdown. It writes a report under
+inference, both explanation methods, shadow-only playback and shutdown. It then launches
+GRIP.exe, captures all four workspaces, checks native shutdown and records hashes of
+the exact frontend/worker binaries exercised. It writes a report under
 `outputs/native-package-verification`. Synthetic results establish software behavior,
 **not real chirality accuracy or factory throughput**. Camera, CUDA, production
 weights, real-time deadlines and physical actuator acceptance remain target-device
 checks. No camera or actuator is used by this verification.
+
+Run native export regressions with `ctest --test-dir outputs/native-build --output-on-failure`
+after the CMake build (Qt/toolchain runtime DLLs must be on PATH). These exercise
+interrupted-export preservation and complete-response atomic commit. Python source
+contract tests supplement these checks; they do not replace interactive GUI testing.
+
+Before distributing a release, include applicable Qt and Python-package licenses/notices
+and satisfy their redistribution terms. Validate the bundle on a clean Windows machine
+without developer dependencies. Manually accept file dialogs, ARMED confirmation and
+cancellation, delayed startup field errors, counters, session switches, exports and
+connection-loss behaviour using disconnected hardware or a controlled acceptance fixture,
+never an unguarded live actuator.

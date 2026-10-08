@@ -45,7 +45,7 @@ def create_desktop_app(service, factory, inference, token: str, shutdown=None):
     @app.get("/api/desktop/state")
     def native_state():
         # Full raw logs/GPU probes are explicit diagnostics requests, not hot polling.
-        result = service.snapshot(include_logs=False)
+        result = service.snapshot(include_logs=False, reveal_paths=True)
         result.update(factory=factory.snapshot(reveal_paths=True),
                       inference=inference.snapshot(reveal_paths=True),
                       comparison_root=str(service.comparison_root))

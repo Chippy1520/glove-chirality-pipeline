@@ -70,7 +70,7 @@ ColumnLayout {
     WorkflowForm { Layout.fillWidth:true;visible:choice.currentIndex===3;definition:tools.form("explain");buttonLabel:"Generate explanation";onSubmitted:payload=>client.run("explain",payload) }
     ColumnLayout {
         visible:choice.currentIndex===4;Layout.fillWidth:true
-        WorkflowForm { Layout.fillWidth:true;definition:tools.form("tensorboard");buttonLabel:"Start TensorBoard";onSubmitted:payload=>client.run("tensorboard",payload) }
+        WorkflowForm { Layout.fillWidth:true;definition:tools.form("tensorboard");stopSlot:"tensorboard";buttonLabel:"Start TensorBoard";onSubmitted:payload=>client.run("tensorboard",payload) }
         RowLayout {
             Button { text:"Open dashboard";onClicked:client.openLocal("http://127.0.0.1:6006") }
             Button { text:"Stop TensorBoard";onClicked:client.request("stop-tensorboard","/api/stop/tensorboard","POST",{}) }

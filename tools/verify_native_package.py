@@ -5,6 +5,7 @@ No camera/serial actuation. Synthetic success is software evidence, not accuracy
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import runpy
@@ -115,8 +116,23 @@ def main():
         api("/api/desktop/shutdown", {})
         process.wait(timeout=20)
         assert process.returncode == 0
+        captures = output / "native-ui"
+        captures.mkdir(exist_ok=True)
+        for image in captures.glob("native_*.png"):
+            image.unlink()
+        with (output / "native-ui.log").open("w", encoding="utf-8") as gui_log:
+            gui = subprocess.run([str(bundle / "GRIP.exe"), "--workspace", str(workdir),
+                                  "--capture-directory", str(captures)], env=environment,
+                                 stdout=gui_log, stderr=subprocess.STDOUT, timeout=85, check=False)
+        assert gui.returncode == 0, "Native client startup/shutdown failed"
+        assert all((captures / f"native_{index}.png").stat().st_size > 0 for index in range(4)), "Native UI did not load every workspace"
+        binaries = {}
+        for executable in (bundle / "GRIP.exe", worker):
+            with executable.open("rb") as file:
+                binaries[str(executable.relative_to(bundle))] = hashlib.file_digest(file, "sha256").hexdigest()
         report = {"status": "PASS", "sanitized_environment": True, "synthetic_only": True, "real_accuracy_claim": False,
-                  "cuda_tested": False, "jobs": outcomes, "shutdown_exit_code": process.returncode}
+                  "cuda_tested": False, "jobs": outcomes, "shutdown_exit_code": process.returncode,
+                  "native_ui_smoke": "PASS", "binary_sha256": binaries}
         (output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report, indent=2))
     finally:

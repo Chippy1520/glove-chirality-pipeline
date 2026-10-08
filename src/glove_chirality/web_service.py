@@ -562,14 +562,16 @@ class CommandService:
             job = self._jobs.get(slot)
             return self.stop_job(job.job_id) if job is not None else False
 
-    def snapshot(self, include_logs: bool = True) -> dict[str, Any]:
+    def snapshot(self, include_logs: bool = True, *, reveal_paths: bool | None = None) -> dict[str, Any]:
+        if reveal_paths is None:
+            reveal_paths = include_logs
         with self._lock:
             running = {slot: job is not None and job.status in {
                 "preflight", "starting", "running", "stopping"}
                 for slot, job in self._jobs.items()}
             return {
                 "running": running,
-                "jobs": {slot: self.get_job(job.job_id, reveal_paths=include_logs)
+                "jobs": {slot: self.get_job(job.job_id, reveal_paths=reveal_paths)
                          if job is not None else None for slot, job in self._jobs.items()},
                 "logs": [asdict(entry) for entry in self._logs] if include_logs else [],
                 "last_sequence": self._sequence,

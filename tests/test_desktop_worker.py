@@ -88,6 +88,21 @@ def test_native_inference_never_registers_hardware_routes(desktop):
         assert response.status_code in {404, 405}
 
 
+def test_native_polling_retains_host_job_details_without_exposing_viewer_paths(desktop):
+    client, _, service, *_ = desktop
+    job = service._reserve("pipeline", "audit_dataset", "succeeded", {"output": "private-output.json"})
+    job.result = {"metrics": {"count": 3}}
+    job.artifacts = [{"path": "private-output.json"}]
+    job.preflight = {"checks": [{"field": "output", "status": "passed"}]}
+    host = client.get("/api/desktop/state", headers=HEADERS).get_json()
+    assert host["jobs"]["pipeline"]["output"] == "private-output.json"
+    assert host["jobs"]["pipeline"]["result"] == job.result
+    assert host["jobs"]["pipeline"]["preflight"] == job.preflight
+    assert not host["logs"]
+    viewer = service.snapshot(include_logs=False)["jobs"]["pipeline"]
+    assert "output" not in viewer and not viewer["result"] and not viewer["artifacts"]
+
+
 def test_native_worker_uses_existing_preflight(desktop):
     client, *_ = desktop
     response = client.post("/api/jobs/preflight", json={"action": "train", "manifest": "missing.csv", "output": "out.pt"}, headers=HEADERS)

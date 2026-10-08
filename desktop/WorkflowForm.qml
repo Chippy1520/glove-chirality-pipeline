@@ -10,6 +10,7 @@ ColumnLayout {
     property bool advancedOpen: false
     property bool actionsVisible: true
     property bool locked: false
+    property string stopSlot: "pipeline"
     property string buttonLabel: "Start workflow"
     signal submitted(var payload)
     signal valuesEdited()
@@ -147,7 +148,7 @@ ColumnLayout {
         Button {
             text: "Stop workflow"
             enabled: client.ready
-            onClicked: client.request("stop", "/api/stop/pipeline", "POST", {})
+            onClicked: client.request("stop", "/api/stop/" + form.stopSlot, "POST", {})
         }
     }
 }

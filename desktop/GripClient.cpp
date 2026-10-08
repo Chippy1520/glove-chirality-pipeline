@@ -1,8 +1,10 @@
 #include "GripClient.h"
+#include "Export.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDataStream>
+#include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -45,11 +47,11 @@ GripClient::GripClient(FrameProvider *frames, QObject *parent) : QObject(parent)
     connect(&frameTimer_, &QTimer::timeout, this, &GripClient::fetchFrame);
     connect(&worker_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
         setStatus("Worker could not start: " + worker_.errorString());
-        ready_ = false; emit readyChanged();
+        ready_ = false; clearPreview(); emit readyChanged();
     });
     connect(&worker_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
         readinessTimer_.stop(); stateTimer_.stop(); frameTimer_.stop();
-        ready_ = false; emit readyChanged();
+        ready_ = false; clearPreview(); emit readyChanged();
         setStatus(closing_ ? "Stopped safely" : QString("Processing worker stopped (%1). Inspection is unavailable.").arg(code));
         if (closing_) QCoreApplication::quit();
     });
@@ -59,6 +61,7 @@ void GripClient::setStatus(const QString &value) {
     status_ = value; emit statusChanged();
 }
 void GripClient::start(const QString &worker, const QStringList &workerArgs, const QString &workdir) {
+    workdir_ = workdir;
     const QString readyFile = temporary_.filePath("ready.json");
     QStringList args = workerArgs;
     args << "serve" << "--workdir" << workdir << "--ready-file" << readyFile;
@@ -99,7 +102,7 @@ void GripClient::send(const QString &path, const QString &method, const QVariant
     if (method == "GET") reply = network_.get(request);
     else reply = network_.sendCustomRequest(request, method.toUtf8(), QJsonDocument::fromVariant(payload).toJson(QJsonDocument::Compact));
     connect(reply, &QNetworkReply::finished, this, [reply, handler] {
-        const auto status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto status = reply->error() == QNetworkReply::NoError ? reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() : 0;
         const auto bytes = reply->readAll();
         handler(bytes, status); reply->deleteLater();
     });
@@ -125,14 +128,24 @@ void GripClient::poll() {
     stateBusy_ = true;
     send("/api/desktop/state", "GET", {}, [this](QByteArray bytes, int code) {
         stateBusy_ = false;
-        if (code != 200) { setStatus("Backend connection lost · displayed state may be stale"); return; }
-        snapshot_ = QJsonDocument::fromJson(bytes).toVariant().toMap(); emit snapshotChanged();
+        if (code != 200) { clearPreview(); setStatus("Backend connection lost · preview cleared, displayed state may be stale"); return; }
+        snapshot_ = QJsonDocument::fromJson(bytes).toVariant().toMap();
+        const auto session = snapshot_.value(previewSession_).toMap();
+        const auto key = previewSession_ + ":" + session.value("session_id").toString() + ":" + session.value("job_id").toString();
+        if (key != previewKey_ || !session.value("running").toBool()) clearPreview();
+        previewKey_ = key;
+        emit snapshotChanged();
     });
 }
 void GripClient::setPreviewSession(const QString &session) {
     if (session != "factory" && session != "inference") return;
     if (previewSession_ == session) return;
-    previewSession_ = session; emit previewSessionChanged();
+    previewSession_ = session; clearPreview(); emit previewSessionChanged();
+}
+void GripClient::clearPreview() {
+    ++previewGeneration_;
+    if (!frameRevision_) return;
+    frames_->setImage({}); frameRevision_ = 0; emit frameChanged();
 }
 void GripClient::setPreviewEnabled(bool enabled) {
     if (previewEnabled_ == enabled) return;
@@ -142,12 +155,13 @@ void GripClient::fetchFrame() {
     if (!ready_ || frameBusy_ || !previewEnabled_ || closing_) return;
     if (!snapshot_.value(previewSession_).toMap().value("running").toBool()) return;
     frameBusy_ = true;
-    send("/api/" + previewSession_ + "/frame.jpg", "GET", {}, [this](QByteArray bytes, int code) {
-        if (code != 200 || bytes.isEmpty()) { frameBusy_ = false; return; }
+    const auto generation = previewGeneration_;
+    send("/api/" + previewSession_ + "/frame.jpg", "GET", {}, [this, generation](QByteArray bytes, int code) {
+        if (generation != previewGeneration_ || code != 200 || bytes.isEmpty()) { frameBusy_ = false; return; }
         auto *watcher = new QFutureWatcher<QImage>(this);
-        connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher] {
+        connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher, generation] {
             const auto image = watcher->result(); watcher->deleteLater(); frameBusy_ = false;
-            if (image.isNull()) return;
+            if (generation != previewGeneration_ || image.isNull()) return;
             frames_->setImage(image); ++frameRevision_; emit frameChanged();
         });
         watcher->setFuture(QtConcurrent::run([bytes] { return QImage::fromData(bytes); }));
@@ -162,16 +176,19 @@ QString GripClient::choosePath(const QString &kind, const QString &current) {
     return QFileDialog::getOpenFileName(nullptr, "Choose file", current, {}, nullptr, options);
 }
 void GripClient::openLocal(const QString &target) {
+    if (target.isEmpty()) return;
+    QFileInfo file(QDir(workdir_).absoluteFilePath(target));
+    if (file.exists()) { QDesktopServices::openUrl(QUrl::fromLocalFile(file.absoluteFilePath())); return; }
     const QUrl url(target);
     if ((url.scheme() == "http" || url.scheme() == "https") && (url.host() == "127.0.0.1" || url.host() == "localhost")) QDesktopServices::openUrl(url);
-    else if (url.scheme().isEmpty() && QFileInfo::exists(target)) QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(target).absoluteFilePath()));
 }
 void GripClient::copyText(const QString &value) { QApplication::clipboard()->setText(value); }
 void GripClient::saveText(const QString &suggestedName, const QString &text) {
     const auto path = QFileDialog::getSaveFileName(nullptr, "Export", suggestedName, {}, nullptr, QFileDialog::DontUseNativeDialog);
     if (path.isEmpty()) return;
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || file.write(text.toUtf8()) < 0)
+    QSaveFile file(path);
+    const auto bytes = text.toUtf8();
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())
         emit failure("export", {{"error", "Could not write the selected output file"}});
 }
 void GripClient::setAlertVolume(double value) { tone_.setVolume(qBound(0.0, value, 1.0)); emit alertVolumeChanged(); }
@@ -184,15 +201,16 @@ void GripClient::download(const QString &path, const QString &suggestedName) {
     request.setRawHeader("X-GRIP-Desktop", token_.toUtf8());
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     auto *reply = network_.get(request);
-    auto *file = new QFile(target, reply);
+    auto *file = new QSaveFile(target, reply);
     if (!file->open(QIODevice::WriteOnly)) { reply->abort(); reply->deleteLater(); emit failure("download", {{"error", "Could not open the selected output file"}}); return; }
     connect(reply, &QNetworkReply::readyRead, this, [reply, file] {
-        if (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200) file->write(reply->readAll());
+        if (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200) return;
+        const auto bytes = reply->readAll();
+        if (file->write(bytes) != bytes.size()) reply->abort();
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply, file] {
-        const bool ok = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 && file->error() == QFileDevice::NoError;
-        file->close();
-        if (!ok) { file->remove(); emit failure("download", {{"error", "Export failed; partial output removed"}}); }
+        const bool complete = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 && reply->error() == QNetworkReply::NoError;
+        if (!finishExport(*file, *reply, complete)) emit failure("download", {{"error", "Export failed; existing destination preserved"}});
         reply->deleteLater();
     });
 }

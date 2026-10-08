@@ -4,6 +4,11 @@ This file lets another researcher or AI coding agent continue without access to 
 
 ## Workstation delivery to the training/factory device
 
+The native Windows C++/Qt Quick client, supervised Python worker and reproducible
+bundle builder are now included. See [`docs/NATIVE_DESKTOP.md`](docs/NATIVE_DESKTOP.md).
+Native and browser inspection both use the shared three-stage live runtime; neither
+source publication nor synthetic verification certifies factory hardware acceptance.
+
 Read [`docs/TODAY_WORKSTATION.md`](docs/TODAY_WORKSTATION.md) before operating the
 upgraded GUI. Code is developed and software-tested separately; the device pulling
 the repository owns the real recordings, CUDA installation, camera, checkpoints

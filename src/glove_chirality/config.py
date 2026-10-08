@@ -194,11 +194,18 @@ class RuntimeConfig:
     detect_every_n_frames: int = 1
     report_interval_seconds: float = 5.0
     warmup: bool = True
-    stage_pipeline: bool = False
+    stage_pipeline: bool = True
+    classifier_queue_size: int = 8
 
     def __post_init__(self):
         if self.capture_queue_size <= 0:
             raise ValueError("capture_queue_size must be positive")
+        if (
+            isinstance(self.classifier_queue_size, bool)
+            or not isinstance(self.classifier_queue_size, int)
+            or self.classifier_queue_size <= 0
+        ):
+            raise ValueError("classifier_queue_size must be a positive integer")
         if self.detect_every_n_frames <= 0:
             raise ValueError("detect_every_n_frames must be positive")
         if self.report_interval_seconds <= 0:

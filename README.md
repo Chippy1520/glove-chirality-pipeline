@@ -6,6 +6,15 @@ The central design rule is that dataset creation and deployment call the **same 
 
 For project continuation, read [`HANDOFF.md`](HANDOFF.md). Coding agents should also read [`AGENTS.md`](AGENTS.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/REAL_VIDEO_PLAN.md`](docs/REAL_VIDEO_PLAN.md), [`docs/CAMERA_CALIBRATION.md`](docs/CAMERA_CALIBRATION.md), [`docs/DETECTOR_MODEL_OPTIONS.md`](docs/DETECTOR_MODEL_OPTIONS.md), and [`docs/CLASSIFIER_MODEL_OPTIONS.md`](docs/CLASSIFIER_MODEL_OPTIONS.md).
 
+## Native desktop workstation
+
+The Windows **C++/Qt Quick native application** and supervised Python worker are in
+`desktop/` and `src/glove_chirality/desktop_worker.py`. It includes inspection,
+extraction/training workflows, comparison and tools, using the shared three-layer
+live pipeline. Build and deployment instructions:
+[`docs/NATIVE_DESKTOP.md`](docs/NATIVE_DESKTOP.md). The Git repository contains
+source and a reproducible bundle builder, not a prebuilt installer or model weights.
+
 ## Browser workstation
 
 For the device pulling the repository to train and operate the factory,
@@ -29,6 +38,13 @@ glove-pipeline-gui --lan --lan-port 8877
 ```
 
 ## Pipeline
+
+Live execution uses **Layer 1 segmentation → Layer 2 ordered tracking/cropping →
+Layer 3 chirality classification/output**, with a separate latest-only presentation
+worker. The detector no longer owns passage/crop work. Existing checkpoints, crop
+semantics and FP32 defaults remain compatible. See
+[`docs/THREE_STAGE_PIPELINE.md`](docs/THREE_STAGE_PIPELINE.md) for queue/fault behavior,
+first-worker measurements and their real-time acceptance limits.
 
 ```text
 camera / video

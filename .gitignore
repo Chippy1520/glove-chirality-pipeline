@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.fabric/
+aqtinstall.log
 node_modules/
 *.egg-info/
 build/

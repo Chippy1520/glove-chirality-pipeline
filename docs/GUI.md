@@ -41,6 +41,15 @@ LAN clients can view process state and historical comparison metrics. They canno
 
 These restrictions are structural: the LAN application does not register mutation, path, configuration, raw-log, or TensorBoard routes. LAN mode still uses plain HTTP, so it is intended only for a trusted private network where token sniffing is not a concern. Do not expose it through port forwarding, a public interface, or an untrusted network.
 
+## Three-stage live execution
+
+Factory Live and generic live inference use Layer 1 segmentation, Layer 2 ordered
+passage/crop extraction and Layer 3 chirality/output. Existing classifier checkpoints
+and settings remain compatible despite the updated layer names. Preview and metrics
+are latest-only observer callbacks, so slow rendering does not block passage state.
+Queue saturation or worker/callback failures stop the session; pending decisions
+cannot activate physical rejection after stop. See `THREE_STAGE_PIPELINE.md`.
+
 ## Focused workflows
 
 The workstation shows **one workflow at a time** instead of stacking every form

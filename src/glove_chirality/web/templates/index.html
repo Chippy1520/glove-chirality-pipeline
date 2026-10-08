@@ -150,7 +150,7 @@
       </section>
 
       <section id="train" class="page-section host-only">
-        <div class="section-heading"><div><p class="eyebrow">Workflow 03</p><h1>Train Layer 2</h1></div><p class="lede">Mixed left/right training with source-grouped validation and chirality-safe augmentation.</p></div>
+        <div class="section-heading"><div><p class="eyebrow">Workflow 03</p><h1>Train Layer 3</h1></div><p class="lede">Mixed left/right training with source-grouped validation and chirality-safe augmentation.</p></div>
         <article class="panel">
           <form class="action-form form-grid" data-action="train">
             <label class="field"><span>Manifest</span><span class="input-row"><input id="train-manifest" name="manifest" required><button type="button" class="icon-button browse" data-target="train-manifest" data-kind="file">Browse</button></span></label>
@@ -183,8 +183,8 @@
       </section>
 
       <section id="infer" class="page-section host-only">
-        <div class="section-heading"><div><p class="eyebrow">Workflow 04</p><h1>Inference</h1></div><p class="lede">Run accepted crops, complete videos, or a live source through the same Layer 2 checkpoint.</p></div>
-        <p class="field-help">Source: camera index, video, or OpenCV-compatible stream. The research live page does not arm an actuator. Checkpoint: saved Layer-2 weights; the selected architecture must match. Config: Layer-1 detection, ROI, trigger zone, timing, and the exact crop sent to Layer-2. Device: CUDA uses the NVIDIA GPU; CPU is for debugging; Auto selects CUDA when available. CUDA AMP: mixed precision on a compatible GPU. Recall-priority class: argmax picks the larger probability; a priority class and threshold can bias toward that class. Decision threshold: only used with a recall-priority class. Lowering the RIGHT threshold can reduce missed right gloves but increases false rejects.</p>
+        <div class="section-heading"><div><p class="eyebrow">Workflow 04</p><h1>Inference</h1></div><p class="lede">Run accepted crops, complete videos, or a live source through the same Layer 3 chirality checkpoint.</p></div>
+        <p class="field-help">Source: camera index, video, or OpenCV-compatible stream. The research live page does not arm an actuator. Checkpoint: existing chirality weights now used in Layer 3; the architecture must match. Config: Layer-1 segmentation and Layer-2 passage geometry, timing and cropping. Device: CUDA uses the NVIDIA GPU; CPU is for debugging; Auto selects CUDA when available. CUDA AMP: mixed precision on a compatible GPU. Recall-priority class: argmax picks the larger probability; a priority class and threshold can bias toward that class. Decision threshold: only used with a recall-priority class. Lowering the RIGHT threshold can reduce missed right gloves but increases false rejects.</p>
         <div class="two-column">
           <article class="panel"><div class="panel-heading"><div><h2>Video</h2></div></div><form class="action-form form-grid one" data-action="infer_video">
             <label class="field"><span>Video</span><input name="video" required></label><label class="field"><span>Checkpoint</span><input name="checkpoint" required></label><label class="field"><span>Output directory</span><input name="output" value="outputs/video-test" required></label><label class="field"><span>Extraction config</span><input name="config" value="configs/default.yaml" required></label><label class="field"><span>Device</span><input name="device" value="auto"></label><label class="field"><span>Recall-priority class</span><select name="decision_class"><option>argmax</option><option>right</option><option>left</option></select></label><label class="field"><span>Decision threshold</span><input name="decision_threshold" type="number" value="0.5" min="0" max="1" step="0.01"></label><div class="form-actions"><button class="button primary" type="submit">Run video</button></div>

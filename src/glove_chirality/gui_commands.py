@@ -10,6 +10,8 @@ def _required(**values: str) -> None:
 
 
 def _base() -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "cli"]
     return [sys.executable, "-m", "glove_chirality.cli"]
 
 
@@ -109,10 +111,9 @@ def explain(
 
 def tensorboard(logdir: str, port: int = 6006) -> list[str]:
     _required(logdir=logdir)
-    return [
-        sys.executable,
-        "-m",
-        "tensorboard.main",
+    runner = ([sys.executable, "tensorboard"] if getattr(sys, "frozen", False)
+              else [sys.executable, "-m", "tensorboard.main"])
+    return runner + [
         "--logdir", logdir,
         "--host", "127.0.0.1",
         "--port", str(port),

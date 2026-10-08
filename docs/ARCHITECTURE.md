@@ -29,19 +29,46 @@ frame.
 
 ## Realtime stage rate
 
-Mask-overlap tracking needs the next detection before a glove slides off its last mask.
-Capture and Layer 1 therefore set the rate. Layer 2 must not.
+The live runtime separates three logical layers and keeps display work off their
+critical paths:
 
-1. Capture keeps the newest frame and drops older ones. It never waits on a model.
-2. Layer 1 is one YOLO call plus mask-overlap association. It runs on the detector
-   thread and does not wait for classification, display, or disk.
-3. The only handoff to Layer 2 is a completed passage whose crop is already built.
-   A late left/right result must not slow the next frame.
+```text
+capture -> Layer 1: segmentation -> bounded frame/detection FIFO (2)
+                                  -> Layer 2: ordered passage state + crop
+                                  -> bounded passage FIFO -> Layer 3: classify/output
+                                            |
+                              latest-only observer: preview, metrics, reports
+```
 
-`stage_pipeline: true` starts this split. The detector queue is still two frames deep,
-and the thread that drains it also runs tracking and the frame callback. A slow preview
-can drop the frames the tracker needs. Live association has to move onto the detector
-thread so the queue between stages carries completed crops, not every frame.
+1. Capture keeps the newest live frames; sequential video playback remains lossless.
+2. Layer 1 owns detector inference/output preparation, not tracking or crop creation.
+   Its immutable packet couples the source frame, index/time, detections, partials,
+   latency and that frame's diagnostics. A full detection FIFO applies backpressure;
+   it does not silently discard already-detected observations.
+3. Layer 2 is the sole ordered `PassageProcessor` owner in the session worker. It
+   preserves the same association, directional crossing, candidate selection and
+   canonical crop used by offline extraction. It never waits for a frame callback.
+4. Layer 3 classifies once per accepted passage and owns event/output callbacks.
+   Rejected and PREVIEW-mode outcomes also pass through this worker, keeping disk
+   and crop-preview encoding out of Layer 2. `classifier_queue_size` defaults to 8;
+   saturation raises an explicit event-ID fault and stops/disarms the session rather
+   than silently losing a passage or allowing unbounded memory growth.
+5. Frame/metrics callbacks are latest-only observations on a separate worker. They
+   may skip intermediate display frames; reliable passage results use `event_callback`.
+   Old queued frame observations cannot overwrite a newer classified decision.
+
+`stage_pipeline: true` is the live default. Explicit `false` retains fused detector
+and passage processing for comparisons. FP32, ROI and crossing/crop semantics are
+unchanged. Classifier warmup runs its full preprocessing/prediction path in its own
+worker; detector warmup uses the source geometry in its owning worker. Shutdown
+drains admitted outcomes and joins workers; failures stop the session. Native calls
+that do not return cannot be preempted by Python threads; join timeout is a fault,
+not successful completion. Already-sent firmware delays cannot be recalled.
+
+Metrics expose `layer1_ms`, `layer2_ms`, `layer3_ms`, detection queue wait, frame age
+and skipped observer frames while retaining legacy metric keys. Lower Layer-1
+occupancy is not a guarantee of faster YOLO, complete camera-rate tracking, or an
+actuator deadline. See `docs/THREE_STAGE_PIPELINE.md` for the measured scope.
 
 ## Package map
 

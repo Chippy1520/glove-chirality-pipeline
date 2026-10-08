@@ -7,7 +7,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TextIO
@@ -20,6 +20,7 @@ from glove_chirality.config import ExtractionConfig
 from glove_chirality.detection import build_detector
 from glove_chirality.events import FrameResult, PassageOutcome, PassageProcessor
 from glove_chirality.inference import TorchClassifier
+from glove_chirality.types import Detection
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,72 @@ class CapturedFrame:
     index: int
     captured_at: float
     image: np.ndarray
+    received_at: float | None = None
+
+
+@dataclass(frozen=True)
+class _DetectedFrame:
+    packet: CapturedFrame
+    detections: tuple[Detection, ...]
+    tracking_only: tuple[Detection, ...]
+    detector_ms: float
+    ready_at: float
+    diagnostics: object | None
+    detection_ran: bool = True
+
+
+class _LatestObserver:
+    """One in-flight callback plus one latest observation; never blocks tracking."""
+
+    def __init__(self, frame_callback, metrics_callback, on_error):
+        self.frame_callback = frame_callback
+        self.metrics_callback = metrics_callback
+        self.on_error = on_error
+        self.condition = threading.Condition()
+        self.frame = None
+        self.snapshot = None
+        self.done = False
+        self.skipped = 0
+        self.error = None
+        self.thread = threading.Thread(target=self._run, name="pipeline-observer", daemon=True)
+
+    def offer(self, frame=None, snapshot=None):
+        with self.condition:
+            if frame is not None and self.frame_callback is not None:
+                if self.frame is not None:
+                    self.skipped += 1
+                self.frame = frame
+            if snapshot is not None:
+                self.snapshot = snapshot
+            self.condition.notify()
+
+    def _run(self):
+        try:
+            while True:
+                with self.condition:
+                    self.condition.wait_for(lambda: self.done or self.frame is not None or self.snapshot is not None)
+                    frame, snapshot = self.frame, self.snapshot
+                    self.frame = self.snapshot = None
+                    if frame is None and snapshot is None and self.done:
+                        return
+                if frame is not None:
+                    self.frame_callback(*frame)
+                if snapshot is not None:
+                    self.metrics_callback(snapshot)
+        except Exception as exc:  # noqa: BLE001 - observer faults must stop the session
+            self.error = exc
+            self.on_error()
+
+    def close(self):
+        with self.condition:
+            self.done = True
+            self.condition.notify()
+        self.thread.join(timeout=30)
+        if self.thread.is_alive():
+            self.on_error()
+            raise RuntimeError("Pipeline observer did not stop")
+        if self.error is not None:
+            raise self.error
 
 
 class LatestFrameCapture:
@@ -186,7 +253,7 @@ class SequentialVideoCapture:
             if index == 0:
                 media_time = 0.0
             self._last_media_time = media_time
-            return CapturedFrame(index, self.time_origin + media_time, image)
+            return CapturedFrame(index, self.time_origin + media_time, image, time.monotonic())
 
     @property
     def exhausted(self):
@@ -223,6 +290,7 @@ class JsonlEventSink:
 @dataclass
 class LiveMetrics:
     captured_frames: int = 0
+    source_exhausted: bool = False
     processed_frames: int = 0
     dropped_frames: int = 0
     accepted_passages: int = 0
@@ -238,6 +306,8 @@ class _RollingMetrics:
         self.classifier_ms: deque[float] = deque(maxlen=100)
         self.accepted_latency_ms: deque[float] = deque(maxlen=100)
         self.classifier_queue_wait_ms: deque[float] = deque(maxlen=100)
+        self.detection_queue_wait_ms: deque[float] = deque(maxlen=100)
+        self.frame_age_ms: deque[float] = deque(maxlen=100)
 
     @staticmethod
     def average(values: deque[float]) -> float:
@@ -248,7 +318,7 @@ LAYER2_QUEUE_WARN = 4
 
 
 def note_classifier_backlog(waiting: int, metrics: LiveMetrics) -> None:
-    """Count a deep Layer 2 queue. Never drop the crop."""
+    """Count a deep Layer 3 queue. Never silently discard a passage."""
     if waiting >= LAYER2_QUEUE_WARN:
         metrics.classifier_overload += 1
 
@@ -334,6 +404,11 @@ def _metrics_snapshot(metrics: LiveMetrics, rolling: _RollingMetrics, started: f
         "processed_fps": metrics.processed_frames / elapsed,
         "yolo_ms": rolling.average(rolling.yolo_ms),
         "event_ms": rolling.average(rolling.event_ms),
+        "layer1_ms": rolling.average(rolling.yolo_ms),
+        "layer2_ms": rolling.average(rolling.event_ms),
+        "layer3_ms": rolling.average(rolling.classifier_ms),
+        "detection_queue_wait_ms": rolling.average(rolling.detection_queue_wait_ms),
+        "frame_age_ms": rolling.average(rolling.frame_age_ms),
         "classifier_ms": rolling.average(rolling.classifier_ms),
         "accepted_latency_ms": rolling.average(rolling.accepted_latency_ms),
         "classifier_queue_wait_ms": rolling.average(rolling.classifier_queue_wait_ms),
@@ -373,116 +448,113 @@ def run_live_inference(
     on_firstinference: Callable[[], None] | None = None,
     classify_callback=None,
 ) -> LiveMetrics:
-    """Run event-driven inference with one classifier call per accepted passage."""
+    """Segmentation -> ordered passage/crop extraction -> event-rate classification."""
     detector = detector or build_detector(config.detector)
     classifier = classifier or TorchClassifier(
-        checkpoint,
-        device=device,
-        amp=amp,
-        decision_class=decision_class,
+        checkpoint, device=device, amp=amp, decision_class=decision_class,
         decision_threshold=decision_threshold,
     )
     capture = capture or LatestFrameCapture(
-        parse_capture_source(source),
-        config.runtime.capture_queue_size,
+        parse_capture_source(source), config.runtime.capture_queue_size,
     )
     capture.start()
     sink = JsonlEventSink(output) if event_callback is None else None
     emit = event_callback or sink.emit
     source_name = "stream" if "://" in str(source) else (f"camera_{source}" if str(source).isdigit() else Path(str(source)).stem)
     processor = PassageProcessor(detector, config, source_name, "live")
-    metrics = LiveMetrics()
-    rolling = _RollingMetrics()
+    metrics, rolling = LiveMetrics(), _RollingMetrics()
     metrics_lock = threading.Lock()
-    classify_queue: queue.Queue = queue.Queue()
+    classify_queue: queue.Queue = queue.Queue(maxsize=config.runtime.classifier_queue_size)
+    detect_queue: queue.Queue[_DetectedFrame | None] = queue.Queue(maxsize=2)
+    pipeline_stop = threading.Event()
+    detect_error, classify_error = [], []
     started = time.monotonic()
     wall_start = datetime.now().astimezone()
     session_id = session_id or wall_start.strftime("live_%Y%m%d_%H%M%S")
     checkpoint_text = None if checkpoint in {None, ""} else str(checkpoint)
     model_name = getattr(classifier, "model_name", None)
     last_report = started
-    warmed = False
-    announced = False
-    processed_sequence = 0
     last_timestamp = 0.0
+    processed_sequence = 0
+    announced = False
 
-    def classify_now() -> bool:
-        return True if should_classify is None else bool(should_classify())
+    def fail_pipeline() -> None:
+        pipeline_stop.set()
+        if stop_event is not None:
+            stop_event.set()
 
-    def emit_outcome(
-        outcome: PassageOutcome,
-        now_relative: float,
-        prediction,
-        confidence,
-        classifier_ms,
-        queue_wait_ms=None,
-        controls=None,
-    ) -> None:
+    def notify_metrics(snapshot: dict) -> None:
+        nonlocal last_report
+        if metrics_callback is not None:
+            metrics_callback(snapshot)
+        now = time.monotonic()
+        if now - last_report >= config.runtime.report_interval_seconds:
+            print(
+                "live "
+                f"capture_fps={snapshot['capture_fps']:.1f} "
+                f"processed_fps={snapshot['processed_fps']:.1f} "
+                f"layer1_ms={snapshot['layer1_ms']:.1f} "
+                f"layer2_ms={snapshot['layer2_ms']:.2f} "
+                f"layer3_ms={snapshot['layer3_ms']:.1f} "
+                f"frame_age_ms={snapshot['frame_age_ms']:.1f} "
+                f"dropped={snapshot['dropped_frames']} "
+                f"accepted={snapshot['accepted_passages']} "
+                f"rejected={snapshot['rejected_passages']}",
+                file=sys.stderr, flush=True,
+            )
+            last_report = now
+
+    observer = _LatestObserver(frame_callback, notify_metrics, fail_pipeline)
+
+    def metrics_snapshot() -> dict:
+        with metrics_lock:
+            metrics.classifier_queue_depth = classify_queue.qsize()
+            result = _metrics_snapshot(metrics, rolling, started, capture)
+        result.update(observer_frames_skipped=observer.skipped,
+                      detection_queue_depth=detect_queue.qsize())
+        return result
+
+    def check_errors() -> None:
+        for error in [*detect_error, *classify_error, observer.error]:
+            if error is not None:
+                raise error
+
+    def emit_outcome(outcome, prediction=None, confidence=None, classifier_ms=None,
+                     queue_wait_ms=None, controls=None):
+        completed = time.monotonic() - started
         anchor = outcome.trigger_crossing_s
         if anchor is None:
             anchor = outcome.passage_started_s
-        crossing_to_decision_ms = None
+        latency = None
         if outcome.accepted and classifier_ms is not None and anchor is not None:
-            crossing_to_decision_ms = max(0.0, now_relative - float(anchor)) * 1000.0
+            latency = max(0.0, completed - float(anchor)) * 1000
         with metrics_lock:
             if outcome.accepted:
                 metrics.accepted_passages += 1
                 if classifier_ms is not None:
                     rolling.classifier_ms.append(classifier_ms)
-                if crossing_to_decision_ms is not None:
-                    rolling.accepted_latency_ms.append(crossing_to_decision_ms)
+                if latency is not None:
+                    rolling.accepted_latency_ms.append(latency)
                 if queue_wait_ms is not None:
                     rolling.classifier_queue_wait_ms.append(queue_wait_ms)
             else:
                 metrics.rejected_passages += 1
         payload = _event_payload(
-            outcome,
-            prediction,
-            confidence,
-            wall_start=wall_start,
-            session_id=session_id,
-            checkpoint=checkpoint_text,
-            model_name=model_name,
-            config_path=config_path,
+            outcome, prediction, confidence, wall_start=wall_start, session_id=session_id,
+            checkpoint=checkpoint_text, model_name=model_name, config_path=config_path,
             classifier_ms=classifier_ms,
         )
         if queue_wait_ms is not None:
             payload["classifier_queue_wait_ms"] = round(float(queue_wait_ms), 3)
-        if crossing_to_decision_ms is not None:
-            payload["crossing_to_decision_ms"] = round(crossing_to_decision_ms, 3)
+        if latency is not None:
+            payload["crossing_to_decision_ms"] = round(latency, 3)
         if event_callback is not None and outcome.crop is not None:
             payload["crop"] = outcome.crop
         if controls is not None:
             payload.update(controls)
         emit(payload)
 
-    def classify_outcome(outcome: PassageOutcome, queued_monotonic: float) -> None:
-        if before_classify is not None:
-            before_classify()
-        classifier_start = time.perf_counter()
-        controls = None
-        if classify_callback is None:
-            prediction, confidence = classifier.predict_array(outcome.crop)
-        else:
-            prediction, confidence, controls = classify_callback(outcome.crop, classifier)
-        if on_firstinference is not None:
-            on_firstinference()
-        classifier_ms = (time.perf_counter() - classifier_start) * 1000.0
-        completed = time.monotonic()
-        queue_wait_ms = max(0.0, (completed - queued_monotonic) * 1000.0 - classifier_ms)
-        emit_outcome(
-            outcome,
-            completed - started,
-            prediction,
-            confidence,
-            classifier_ms,
-            queue_wait_ms,
-            controls,
-        )
-
-    classify_error: list[BaseException] = []
-
-    def classify_worker() -> None:
+    def classify_worker():
         try:
             if on_stage is not None:
                 on_stage("classifier_warmup", "running")
@@ -490,70 +562,74 @@ def run_live_inference(
                 classifier.warmup()
             if on_stage is not None:
                 on_stage("classifier_warmup", "passed")
-        except Exception as exc:  # noqa: BLE001
+            while True:
+                item = classify_queue.get()
+                try:
+                    if item is None:
+                        return
+                    outcome, queued_at, run_classifier = item
+                    if not run_classifier:
+                        emit_outcome(outcome)
+                        continue
+                    if before_classify is not None:
+                        before_classify()
+                    began = time.monotonic()
+                    controls = None
+                    duration_start = time.perf_counter()
+                    if classify_callback is None:
+                        prediction, confidence = classifier.predict_array(outcome.crop)
+                    else:
+                        prediction, confidence, controls = classify_callback(outcome.crop, classifier)
+                    elapsed = (time.perf_counter() - duration_start) * 1000
+                    if on_firstinference is not None:
+                        on_firstinference()
+                    emit_outcome(outcome, prediction, confidence, elapsed,
+                                 max(0.0, began - queued_at) * 1000, controls)
+                finally:
+                    classify_queue.task_done()
+        except Exception as exc:  # noqa: BLE001 - propagated to the session owner
             classify_error.append(exc)
-            return
-        while True:
-            item = classify_queue.get()
-            try:
-                if item is None:
-                    return
-                outcome, queued_monotonic = item
-                classify_outcome(outcome, queued_monotonic)
-            except Exception as exc:  # noqa: BLE001 - surfaced after the detector loop joins
-                classify_error.append(exc)
-                return
-            finally:
-                classify_queue.task_done()
+            fail_pipeline()
 
-    classify_thread = threading.Thread(target=classify_worker, name="layer2-classifier", daemon=True)
-    classify_thread.start()
-
-    def handle(outcome: PassageOutcome, now_relative: float) -> None:
-        if outcome.accepted and classify_now() and outcome.crop is not None:
-            with metrics_lock:
-                note_classifier_backlog(classify_queue.qsize(), metrics)
-                metrics.classifier_queue_depth = classify_queue.qsize()
-            classify_queue.put((outcome, time.monotonic()))
-            return
-        emit_outcome(outcome, now_relative, None, None, None)
-
-    def publish_metrics() -> None:
-        if metrics_callback is None:
-            return
+    def handoff(outcome):
+        run_classifier = outcome.accepted and outcome.crop is not None and (
+            should_classify is None or bool(should_classify())
+        )
         with metrics_lock:
-            metrics.classifier_queue_depth = classify_queue.qsize()
-            metrics_callback(_metrics_snapshot(metrics, rolling, started, capture))
+            note_classifier_backlog(classify_queue.qsize(), metrics)
+        try:
+            classify_queue.put_nowait((outcome, time.monotonic(), run_classifier))
+        except queue.Full as exc:
+            with metrics_lock:
+                metrics.classifier_overload += 1
+            fail_pipeline()
+            raise RuntimeError(f"Layer 3 passage queue is full for event {outcome.event_id}") from exc
 
-    pipeline_stop = threading.Event()
-    # Two frames only. Tracking still runs in the consumer, so a slow preview
-    # can stall Layer 1. Association belongs on the detector thread; this queue
-    # should carry completed crops, not every frame. See docs/ARCHITECTURE.md.
-    detect_queue: queue.Queue = queue.Queue(maxsize=2)
-    detect_error: list[BaseException] = []
-
-    def consume_packet(packet: CapturedFrame, detections, yolo_ms: float | None, tracking_only=None) -> bool:
-        nonlocal last_timestamp, processed_sequence, announced, last_report
-        timestamp_s = packet.captured_at - getattr(capture, "time_origin", started)
-        last_timestamp = timestamp_s
-        if detections is None:
+    def consume(packet, found=None, elapsed=None, partials=None, diagnostics=None, ready_at=None, detection_ran=True):
+        nonlocal last_timestamp, processed_sequence, announced
+        last_timestamp = packet.captured_at - getattr(capture, "time_origin", started)
+        tracking_start = time.monotonic()
+        if not detection_ran:
+            result = processor.process(packet.image, packet.index, last_timestamp, run_detection=False)
+        elif found is None:
             run_detection = processed_sequence % config.runtime.detect_every_n_frames == 0
-            result = processor.process(packet.image, packet.index, timestamp_s, run_detection)
+            result = processor.process(packet.image, packet.index, last_timestamp, run_detection)
+            diagnostics = getattr(detector, "last_diagnostics", None) if run_detection else None
         else:
-            result = processor.process(
-                packet.image,
-                packet.index,
-                timestamp_s,
-                detections=detections,
-                detector_latency_ms=yolo_ms,
-                tracking_only=tracking_only,
-            )
+            result = processor.process(packet.image, packet.index, last_timestamp, detections=found,
+                                       detector_latency_ms=elapsed, tracking_only=partials)
+        processed_at = time.monotonic()
+        result = replace(result, detector_diagnostics=diagnostics,
+                         processed_at_monotonic=time.perf_counter())
         processed_sequence += 1
-        metrics.processed_frames += 1
-        rolling.yolo_ms.append(result.detector_latency_ms)
-        rolling.event_ms.append(result.event_latency_ms)
-        if frame_callback is not None:
-            frame_callback(packet.image, result, timestamp_s)
+        with metrics_lock:
+            metrics.processed_frames += 1
+            rolling.yolo_ms.append(result.detector_latency_ms)
+            rolling.event_ms.append(result.event_latency_ms)
+            acquired_at = packet.received_at if packet.received_at is not None else packet.captured_at
+            rolling.frame_age_ms.append(max(0.0, processed_at - acquired_at) * 1000)
+            if ready_at is not None:
+                rolling.detection_queue_wait_ms.append(max(0.0, tracking_start - ready_at) * 1000)
         if not announced:
             announced = True
             if on_stage is not None:
@@ -561,121 +637,136 @@ def run_live_inference(
                 on_stage("detector_inference", "passed")
             if status_callback is not None:
                 status_callback("RUNNING")
-        now_relative = time.monotonic() - started
         for outcome in result.outcomes:
-            handle(outcome, now_relative)
-        publish_metrics()
-        now = time.monotonic()
-        if now - last_report >= config.runtime.report_interval_seconds:
-            snapshot = _metrics_snapshot(metrics, rolling, started, capture)
-            print(
-                "live "
-                f"capture_fps={snapshot['capture_fps']:.1f} "
-                f"processed_fps={snapshot['processed_fps']:.1f} "
-                f"yolo_ms={snapshot['yolo_ms']:.1f} "
-                f"event_ms={snapshot['event_ms']:.2f} "
-                f"classifier_ms={snapshot['classifier_ms']:.1f} "
-                f"accepted_latency_ms={snapshot['accepted_latency_ms']:.1f} "
-                f"dropped={snapshot['dropped_frames']} "
-                f"accepted={snapshot['accepted_passages']} "
-                f"rejected={snapshot['rejected_passages']}",
-                file=sys.stderr,
-                flush=True,
-            )
-            last_report = now
-        return max_processed_frames is None or metrics.processed_frames < max_processed_frames
+            handoff(outcome)
+        observer.offer(frame=(packet.image, result, last_timestamp), snapshot=metrics_snapshot())
+        return max_processed_frames is None or processed_sequence < max_processed_frames
 
-    def detect_worker() -> None:
+    def stopped():
+        return pipeline_stop.is_set() or (stop_event is not None and stop_event.is_set())
+
+    def put_detection(item):
+        while not stopped():
+            try:
+                detect_queue.put(item, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+    def detect_worker():
         sequence = 0
+        warmed = False
         try:
-            if config.runtime.warmup:
-                detector.warmup(np.zeros((8, 8, 3), dtype=np.uint8))
-            while not pipeline_stop.is_set() and (stop_event is None or not stop_event.is_set()):
+            while not stopped():
                 packet = capture.read(timeout=0.1)
                 if packet is None:
-                    if capture.exhausted or (stop_event is not None and stop_event.is_set()):
+                    if capture.exhausted:
                         break
                     continue
-                run_detection = sequence % config.runtime.detect_every_n_frames == 0
-                sequence += 1
-                if run_detection:
-                    started_detect = time.perf_counter()
-                    found = detector.detect(packet.image)
-                    elapsed = (time.perf_counter() - started_detect) * 1000.0
+                if config.runtime.warmup and not warmed:
+                    detector.warmup(np.zeros_like(packet.image))
+                    warmed = True
+                detection_ran = sequence % config.runtime.detect_every_n_frames == 0
+                if detection_ran:
+                    began = time.perf_counter()
+                    found = tuple(detector.detect(packet.image))
+                    elapsed = (time.perf_counter() - began) * 1000
                     reader = getattr(detector, "tracking_partials", None)
-                    partials = [] if reader is None else list(reader())
+                    partials = () if reader is None else tuple(reader())
+                    diagnostics = getattr(detector, "last_diagnostics", None)
                 else:
-                    found, elapsed, partials = [], 0.0, []
-                while not pipeline_stop.is_set():
-                    try:
-                        detect_queue.put((packet, found, elapsed, partials), timeout=0.1)
-                        break
-                    except queue.Full:
-                        continue
-        except Exception as exc:  # noqa: BLE001 - surfaced after the detector thread joins
+                    found, elapsed, partials, diagnostics = (), 0.0, (), None
+                sequence += 1
+                put_detection(_DetectedFrame(packet, found, partials, elapsed,
+                                             time.monotonic(), diagnostics, detection_ran))
+        except Exception as exc:  # noqa: BLE001 - propagated to the session owner
             detect_error.append(exc)
+            fail_pipeline()
         finally:
-            while not pipeline_stop.is_set():
-                try:
-                    detect_queue.put(None, timeout=0.1)
-                    break
-                except queue.Full:
-                    continue
+            put_detection(None)
 
+    classify_thread = threading.Thread(target=classify_worker, name="layer3-classifier-output", daemon=True)
     detect_thread = None
+    observer.thread.start()
+    classify_thread.start()
     try:
         if config.runtime.stage_pipeline:
-            detect_thread = threading.Thread(target=detect_worker, name="layer1-detector", daemon=True)
+            detect_thread = threading.Thread(target=detect_worker, name="layer1-segmentation", daemon=True)
             detect_thread.start()
-            while stop_event is None or not stop_event.is_set():
-                if classify_error:
-                    raise classify_error[0]
+            # This session owner is the sole ordered Layer 2 state/crop worker.
+            while not stopped():
+                check_errors()
                 try:
                     item = detect_queue.get(timeout=0.1)
                 except queue.Empty:
                     continue
                 if item is None:
+                    metrics.source_exhausted = True
                     break
-                packet, found, elapsed, partials = item
-                if not consume_packet(packet, found, elapsed, partials):
+                if not consume(item.packet, item.detections, item.detector_ms,
+                               item.tracking_only, item.diagnostics, item.ready_at, item.detection_ran):
                     break
         else:
-            while stop_event is None or not stop_event.is_set():
-                if classify_error:
-                    raise classify_error[0]
+            warmed = False
+            while not stopped():
+                check_errors()
                 packet = capture.read(timeout=0.1)
                 if packet is None:
-                    if capture.exhausted or (stop_event is not None and stop_event.is_set()):
+                    if capture.exhausted:
+                        metrics.source_exhausted = True
                         break
                     continue
-                if not warmed and config.runtime.warmup:
-                    if status_callback is not None:
-                        status_callback("Warming models...")
+                if config.runtime.warmup and not warmed:
                     detector.warmup(np.zeros_like(packet.image))
                     warmed = True
-                if not consume_packet(packet, None, None):
+                if not consume(packet):
                     break
-        now_relative = time.monotonic() - started
+        check_errors()
+        if stop_event is not None:
+            stop_event.set()
         for outcome in processor.close(last_timestamp):
-            handle(outcome, now_relative)
-        publish_metrics()
+            handoff(outcome)
     except KeyboardInterrupt:
-        now_relative = time.monotonic() - started
+        fail_pipeline()
         for outcome in processor.close(last_timestamp):
-            handle(outcome, now_relative)
+            handoff(outcome)
+    except BaseException:
+        fail_pipeline()
+        raise
     finally:
         pipeline_stop.set()
+        if stop_event is not None:
+            stop_event.set()
         capture.stop()
-        if detect_thread is not None:
-            detect_thread.join(timeout=30)
-        classify_queue.put(None)
-        classify_thread.join(timeout=30)
-        if detect_error:
-            raise detect_error[0]
-        if classify_error:
-            raise classify_error[0]
-        if sink is not None:
-            sink.close()
+        try:
+            if detect_thread is not None:
+                detect_thread.join(timeout=30)
+                if detect_thread.is_alive():
+                    fail_pipeline()
+                    raise RuntimeError("Layer 1 segmentation worker did not stop")
+            drain_deadline = time.monotonic() + 30
+            while classify_thread.is_alive():
+                if time.monotonic() >= drain_deadline:
+                    fail_pipeline()
+                    raise RuntimeError("Layer 3 passage queue did not drain")
+                try:
+                    classify_queue.put(None, timeout=0.1)
+                    break
+                except queue.Full:
+                    if classify_error:
+                        break
+            classify_thread.join(timeout=max(0.0, drain_deadline - time.monotonic()))
+            if classify_thread.is_alive():
+                fail_pipeline()
+                raise RuntimeError("Layer 3 classifier/output worker did not stop")
+            observer.offer(snapshot=metrics_snapshot())
+        finally:
+            try:
+                observer.close()
+            finally:
+                if sink is not None:
+                    sink.close()
+        check_errors()
     metrics.captured_frames = capture.captured_frames
     metrics.dropped_frames = capture.dropped_frames
     return metrics

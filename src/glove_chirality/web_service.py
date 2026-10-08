@@ -7,7 +7,6 @@ import math
 import os
 import socket
 import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -75,7 +74,7 @@ def build_web_command(action: str, payload: dict[str, Any]) -> tuple[str, list[s
     """Map a named web action to an existing, typed CLI command builder."""
     if action == "audit_dataset":
         gui_commands._required(manifest=_text(payload, "manifest"), output=_text(payload, "output"))
-        command = [sys.executable, "-m", "glove_chirality.cli", "audit-dataset",
+        command = gui_commands._base() + ["audit-dataset",
                    "--manifest", _text(payload, "manifest"), "--output", _text(payload, "output")]
     elif action == "extract_dataset":
         command = gui_commands.extract_dataset(

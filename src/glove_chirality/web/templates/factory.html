@@ -1,7 +1,7 @@
 <section id="factory" class="page-section">
   <div class="section-heading">
     <div><p class="eyebrow">Production</p><h1>GRIP factory inspection</h1></div>
-    <p class="lede">Same Layer-1 detector, passage processor, and canonical crop as offline extraction. Layer 2 runs once per accepted passage.</p>
+    <p class="lede">Layer 1 segments; Layer 2 tracks and builds the shared canonical crop; Layer 3 classifies once per accepted passage.</p>
   </div>
   <p class="notice info">Use SHADOW mode to validate LEFT and RIGHT gloves under the same current lighting before enabling ARMED mode. High validation accuracy does not by itself prove lighting independence.</p>
 
@@ -43,13 +43,13 @@
         <input id="factory-custom-source" placeholder="rtsp:// or video path">
       </label>
 
-      <label class="field"><span>Layer-2 model</span>
+      <label class="field"><span>Layer-3 classifier</span>
         <span class="input-row"><input id="factory-models-root" placeholder="runs/layer2_classifier"><button id="factory-models-save" class="button" type="button">Use folder</button></span>
         <small class="field-help">Classifier used once per accepted glove passage to decide LEFT or RIGHT.</small>
       </label>
       <label class="field"><span>Checkpoint</span>
         <select id="factory-checkpoint"><option value="">Choose a checkpoint</option></select>
-        <small class="field-help">Saved Layer-2 PyTorch weights. The selected model must match the checkpoint architecture.</small>
+        <small class="field-help">Saved chirality-classifier weights (Layer 3). Existing checkpoints remain compatible; the architecture must match.</small>
       </label>
       <label class="field" id="factory-custom-checkpoint-wrap" hidden><span>Custom checkpoint path</span><input id="factory-custom-checkpoint"></label>
       <p id="factory-checkpoint-meta" class="field-help"></p>
@@ -57,7 +57,7 @@
 
       <label class="field"><span>Extraction configuration</span>
         <select id="factory-config"><option value="">Choose a YAML file</option></select>
-        <small class="field-help">Controls Layer-1 detection, ROI, trigger zone, timing and the exact crop sent to Layer-2. Changing this changes what enters the classifier.</small>
+        <small class="field-help">Controls Layer-1 segmentation and Layer-2 passage geometry, timing and cropping. The resulting crop enters the Layer-3 classifier.</small>
       </label>
       <label class="field" id="factory-custom-config-wrap" hidden><span>Custom config path</span><input id="factory-custom-config"></label>
       <p id="factory-config-path" class="field-help"></p>
@@ -159,7 +159,7 @@
   <details class="panel" id="factory-diagnostics">
     <summary>Diagnostics</summary>
     <p id="factory-latest-detail" class="field-help">Confidence, crop, timestamps, and detector details stay here and in the session log.</p>
-    <img id="factory-crop" class="factory-crop" alt="Canonical Layer-2 crop" hidden>
+    <img id="factory-crop" class="factory-crop" alt="Canonical crop produced by Layer 2" hidden>
   </details>
 
   <div class="metric-grid">

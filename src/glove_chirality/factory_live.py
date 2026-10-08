@@ -555,7 +555,7 @@ class FactoryLiveSession:
 
         with self._lock:
             self._hardware_guard()
-            if confirm is not True or self.mode != "armed" or self.status != "running" or self.fault:
+            if confirm is not True or self._stop.is_set() or self.mode != "armed" or self.status != "running" or self.fault:
                 raise ValueError("Manual trigger requires confirmed, running ARMED mode")
             if not self._serial_snapshot().get("connected"):
                 raise ValueError("Actuator is not connected")
@@ -992,7 +992,7 @@ class FactoryLiveSession:
             detector = injected.get("detector") or build_detector(config.detector)
             self._active_detector = detector
             self._on_stage("detector", "passed")
-            self._set_status("Loading Layer-2 classifier...")
+            self._set_status("Loading Layer-3 classifier...")
             if self._stop.is_set():
                 return
             classifier = injected.get("classifier") or TorchClassifier(
@@ -1033,7 +1033,7 @@ class FactoryLiveSession:
             self._on_stage("source_open", "passed")
             self._record_camera(capture)
             self._set_status("Warming models...")
-            runner(
+            run_metrics = runner(
                 self._options.get("source"),
                 self.checkpoint,
                 config,
@@ -1057,7 +1057,7 @@ class FactoryLiveSession:
                 on_firstinference=lambda: self._on_stage("classifier_inference", "passed"),
                 classify_callback=self._classify,
             )
-            if not self._stop.is_set() and self.source_type != "video":
+            if self.source_type != "video" and (getattr(run_metrics, "source_exhausted", False) or not self._stop.is_set()):
                 raise RuntimeError("Camera stream ended")
             self._set_status("stopped")
         except Exception as exc:  # noqa: BLE001 - camera, model, and runtime faults must disarm
@@ -1148,7 +1148,7 @@ class FactoryLiveSession:
                     "center_norm": [cx / max(width, 1), cy / max(height, 1)],
                 }
             )
-        diagnostics = getattr(self._active_detector, "last_diagnostics", None)
+        diagnostics = getattr(result, "detector_diagnostics", None)
         counts = {
             "raw": getattr(diagnostics, "raw_yolo_count", None),
             "size_rejected": getattr(diagnostics, "size_rejected_count", None),
@@ -1166,15 +1166,17 @@ class FactoryLiveSession:
             self._positions = positions
             self._yolo_counts = counts
             phase = self._decision["phase"]
-            if inspecting and phase != "CLASSIFYING":
+            processed_at = getattr(result, "processed_at_monotonic", None)
+            current_observation = processed_at is None or processed_at >= getattr(self, "_settled_at_monotonic", 0.0)
+            if current_observation and inspecting and phase != "CLASSIFYING":
                 self._decision = {"phase": "INSPECTING"}
                 self._inspecting_until = now + 0.35
-            elif phase == "INSPECTING" and now > self._inspecting_until:
+            elif current_observation and phase == "INSPECTING" and now > self._inspecting_until:
                 self._decision = {"phase": self._settled_phase}
             if source is not None:
                 self._preview_source = source
                 self._preview_detections = tuple(result.detections)
-                self._preview_rejected = self._rejected_boxes() if self._show_rejected else ()
+                self._preview_rejected = tuple(getattr(diagnostics, "size_rejected", ()) or ()) if self._show_rejected else ()
                 self._preview_stamp = now
                 self._jpeg_cache = None
 
@@ -1213,7 +1215,7 @@ class FactoryLiveSession:
             mode = self.mode if self.hardware_allowed and self.source_type != "video" else "shadow"
             if mode == "armed" and (record.get("control_revision", self._control_revision) != self._control_revision or record.get("arm_revision", self._arm_revision) != self._arm_revision):
                 mode = "shadow"
-            if mode == "armed" and (not self.running or self.status != "running" or self.fault or not self._serial_snapshot().get("connected")):
+            if mode == "armed" and (self._stop.is_set() or not self.running or self.status != "running" or self.fault or not self._serial_snapshot().get("connected")):
                 mode = "shadow"
             reject_class = record.get("reject_class", self.reject_class)
             delay_ms = record.get("actuator_delay_ms", self._delay_ms)
@@ -1250,13 +1252,14 @@ class FactoryLiveSession:
         with self._lock:
             self._settled_phase = phase
             self._decision = {"phase": phase}
+            self._settled_at_monotonic = time.perf_counter()
         if command:
             with self._lock:
                 self._commanded.add(event_id)
                 self._counters["commands_sent"] += 1
             try:
                 with self._lock:
-                    if self.mode == "armed" and self.running and self.status == "running" and not self.fault and self._arm_revision == arm_revision and self._control_revision == control_revision:
+                    if not self._stop.is_set() and self.mode == "armed" and self.running and self.status == "running" and not self.fault and self._arm_revision == arm_revision and self._control_revision == control_revision:
                         self._serial_actor().submit(command)
             except Exception as exc:  # noqa: BLE001 - a failed enqueue must not block inference
                 self._on_serial_fault(str(exc))

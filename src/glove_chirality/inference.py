@@ -120,15 +120,9 @@ class TorchClassifier:
         return self._predict_pil(Image.fromarray(image_rgb))
 
     def warmup(self) -> None:
-        tensor = self.torch.zeros(
-            (1, 3, self.image_size, self.image_size),
-            device=self.device,
-        )
-        with self.torch.no_grad(), self.torch.autocast(
-            device_type=self.device.type,
-            enabled=self.use_amp,
-        ):
-            self.model(tensor)
+        # Warm the same resize/normalize/transfer/result path as a passage.
+        # The live runtime calls this inside the classifier's owning worker.
+        self.predict_array(np.full((256, 256, 3), 114, dtype=np.uint8))
 
 
 def infer_images(

@@ -66,6 +66,8 @@ class FrameResult:
     detections: tuple[Detection, ...]
     detector_latency_ms: float
     event_latency_ms: float
+    detector_diagnostics: object | None = None
+    processed_at_monotonic: float | None = None
 
 
 def _sharpness(frame: np.ndarray, box: Detection) -> float:

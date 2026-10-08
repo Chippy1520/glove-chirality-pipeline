@@ -262,6 +262,7 @@ def check_workflow(action: str, payload: dict[str, Any], workdir: str | Path) ->
             import argparse
 
             from glove_chirality.cli import build_parser
+            from glove_chirality.gui_commands import _base
             from glove_chirality.web_service import build_web_command
 
             _, command = build_web_command(action, payload)
@@ -269,7 +270,7 @@ def check_workflow(action: str, payload: dict[str, Any], workdir: str | Path) ->
                 parser = build_parser()
                 subcommands = next(item for item in parser._actions
                                    if isinstance(item, argparse._SubParsersAction))
-                selected = subcommands.choices.get(command[3])
+                selected = subcommands.choices.get(command[len(_base())])
                 if selected is None:
                     raise ValueError("Workflow CLI command is not installed")
                 # Validate enumerations against the real parser, without calling

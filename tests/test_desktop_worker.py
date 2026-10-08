@@ -108,3 +108,14 @@ def test_frozen_cli_and_tensorboard_are_not_python_interpreter_commands(monkeypa
 def test_unfrozen_commands_are_unchanged():
     assert gui_commands._base() == [sys.executable, "-m", "glove_chirality.cli"]
     assert gui_commands.tensorboard("logs")[:3] == [sys.executable, "-m", "tensorboard.main"]
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_preflight_resolves_cli_subcommand_for_both_launchers(tmp_path, monkeypatch, frozen):
+    from glove_chirality.preflight import check_workflow
+
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    (tmp_path / "manifest.csv").write_text("image_path,label,source_video\n", encoding="utf-8")
+    report = check_workflow("audit_dataset", {"manifest": "manifest.csv", "output": "audit.json"}, tmp_path)
+    command_check = next(check for check in report["checks"] if check["field"] == "command")
+    assert command_check["status"] == "passed", report

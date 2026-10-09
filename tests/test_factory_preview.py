@@ -39,6 +39,7 @@ def test_preview_encode_stays_off_the_detector_callback(tmp_path):
     session._config = ExtractionConfig()
     frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
     detection = Detection(100, 100, 400, 500, 0.9)
+    assert session.frame_jpeg() is None  # Request a diagnostic preview first.
     session._on_frame(frame, _Result([detection]), 0.0)
     assert session._preview_source is not None
     assert session._jpeg_cache is None
@@ -46,3 +47,27 @@ def test_preview_encode_stays_off_the_detector_callback(tmp_path):
     assert encoded
     assert session.frame_jpeg() is encoded
     assert session._preview_source.shape == frame.shape
+
+
+def test_full_frame_presentation_is_idle_without_demand(tmp_path):
+    session = FactoryLiveSession(tmp_path)
+    session._config = ExtractionConfig()
+    frame = np.zeros((32, 32, 3), dtype=np.uint8)
+    session._on_frame(frame, _Result([Detection(1, 1, 8, 8, 0.9)]), 0.0)
+    assert session._preview_source is None
+    assert session._jpeg_cache is None
+    assert len(session.snapshot(reveal_paths=True)["positions"]) == 1
+
+
+def test_expired_preview_demand_releases_full_frame(tmp_path, monkeypatch):
+    session = FactoryLiveSession(tmp_path)
+    session._config = ExtractionConfig()
+    frame = np.zeros((32, 32, 3), dtype=np.uint8)
+    monkeypatch.setattr("glove_chirality.factory_live.time.monotonic", lambda: 100.0)
+    session.frame_jpeg()
+    session._on_frame(frame, _Result([]), 0.0)
+    assert session._preview_source is not None
+    monkeypatch.setattr("glove_chirality.factory_live.time.monotonic", lambda: 102.0)
+    session._on_frame(frame, _Result([]), 0.1)
+    assert session._preview_source is None
+    assert session._jpeg_cache is None

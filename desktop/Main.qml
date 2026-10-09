@@ -27,7 +27,7 @@ ApplicationWindow {
     property var forms: client.schema.forms || []
     function definition(action) {return forms.find(item=>item.action===action) || ({fields:[]})}
     onClosing:close=>{close.accepted=false;client.shutdown()}
-    onCurrentAreaChanged:client.previewEnabled=currentArea===0
+    onCurrentAreaChanged:client.previewEnabled=false
     header: Rectangle {
         height: 78; color: "#101828"
         RowLayout {

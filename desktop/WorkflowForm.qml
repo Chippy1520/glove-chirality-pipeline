@@ -76,7 +76,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                 }
                 Label {
-                    visible: form.advancedOpen && Boolean(field.help)
+                    visible: Boolean(field.help) && (form.advancedOpen || Boolean(field.help_always))
                     text: field.help || ""
                     color: "#667085"
                     font.pixelSize: 12

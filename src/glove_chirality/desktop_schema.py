@@ -160,7 +160,14 @@ def workstation_schema() -> dict[str, Any]:
             item.update(kind="text", choices=[])
             item["value"] = "0" if key == "source" else "configs/factory.yaml" if key == "config" else ""
             item["browse"] = "file" if key in {"checkpoint", "config"} else ""
+        if key == "delay_ms":
+            item["title"] = "Controller command delay (ms)"
+            item["help"] = "Currently sent unchanged after classification. This is not line-to-actuator travel time."
         factory.append(item)
+    factory.append({"name": "line_to_actuator_ms", "title": "Line → actuator travel time (ms)",
+                    "kind": "number", "value": "", "advanced": False, "required": False,
+                    "minimum": "1", "maximum": "60000", "step": "1", "help_always": True,
+                    "help": "Calibration only: saved with the session.\nNot yet applied to reject commands.\nRemaining-time compensation is not implemented."})
     factory.append({"name": "geometry", "title": "Geometry profile", "kind": "select", "value": "yaml", "advanced": True,
                     "choices": [{"value": "yaml", "label": "Use YAML"}, {"value": "grip", "label": "GRIP current-camera override"}]})
     return {"forms": forms, "factory": factory, "models": list(CLASSIFIER_CHOICES), "comparison_metrics": COMPARISON_METRICS}

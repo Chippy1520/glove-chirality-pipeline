@@ -29,6 +29,8 @@ class GripClient final : public QObject {
     Q_PROPERTY(QVariantMap schema READ schema NOTIFY schemaChanged)
     Q_PROPERTY(QVariantMap snapshot READ snapshot NOTIFY snapshotChanged)
     Q_PROPERTY(int frameRevision READ frameRevision NOTIFY frameChanged)
+    Q_PROPERTY(int cropRevision READ cropRevision NOTIFY classifiedChanged)
+    Q_PROPERTY(QVariantMap classifiedResult READ classifiedResult NOTIFY classifiedChanged)
     Q_PROPERTY(int artifactRevision READ artifactRevision NOTIFY artifactChanged)
     Q_PROPERTY(QString previewSession READ previewSession WRITE setPreviewSession NOTIFY previewSessionChanged)
     Q_PROPERTY(bool previewEnabled READ previewEnabled WRITE setPreviewEnabled NOTIFY previewSessionChanged)
@@ -42,6 +44,8 @@ public:
     QVariantMap schema() const { return schema_; }
     QVariantMap snapshot() const { return snapshot_; }
     int frameRevision() const { return frameRevision_; }
+    int cropRevision() const { return cropRevision_; }
+    QVariantMap classifiedResult() const { return classifiedResult_; }
     int artifactRevision() const { return artifactRevision_; }
     QString previewSession() const { return previewSession_; }
     bool previewEnabled() const { return previewEnabled_; }
@@ -64,6 +68,7 @@ signals:
     void schemaChanged();
     void snapshotChanged();
     void frameChanged();
+    void classifiedChanged();
     void artifactChanged();
     void previewSessionChanged();
     void alertVolumeChanged();
@@ -74,6 +79,8 @@ private:
     void send(const QString &, const QString &, const QVariantMap &, Handler);
     void poll();
     void fetchFrame();
+    void fetchClassified();
+    void clearClassified();
     void clearPreview();
     void setStatus(const QString &);
     FrameProvider *frames_;
@@ -85,7 +92,8 @@ private:
     QElapsedTimer startup_;
     QString baseUrl_, token_, status_ = "Starting the isolated processing worker…";
     QString previewSession_ = "factory", previewKey_, workdir_;
-    QVariantMap schema_, snapshot_;
-    bool ready_ = false, closing_ = false, stateBusy_ = false, frameBusy_ = false, previewEnabled_ = true;
+    QVariantMap schema_, snapshot_, classifiedResult_;
+    bool ready_ = false, closing_ = false, stateBusy_ = false, frameBusy_ = false, previewEnabled_ = false, cropBusy_ = false;
     int frameRevision_ = 0, artifactRevision_ = 0, previewGeneration_ = 0;
+    int cropRevision_ = 0, cropGeneration_ = 0;
 };

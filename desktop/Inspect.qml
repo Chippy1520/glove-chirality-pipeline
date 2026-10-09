@@ -7,7 +7,7 @@ ColumnLayout {
     property var session: client.snapshot[client.previewSession] || ({})
     property var counters: session.counters || ({})
     property var metrics: session.metrics || ({})
-    property var latest: session.latest || ({})
+    property var latest: client.classifiedResult || ({})
     property bool shadowOnly: client.previewSession === "inference"
     property string pendingMode: "shadow"
     property string checkedStartupJob: ""
@@ -17,6 +17,7 @@ ColumnLayout {
     property var seenEvents: ({})
     property string bootSession: ""
     spacing: 16
+    onVisibleChanged: if (!visible) expandedPreview.close()
 
     function number(value) { return value === undefined || value === null ? "—" : Number(value).toFixed(1) }
     function startSession(confirmArmed) {
@@ -76,26 +77,60 @@ ColumnLayout {
         color: "#b42318"; wrapMode: Text.Wrap; Layout.fillWidth: true
     }
     Rectangle {
+        id: passageCard
         Layout.fillWidth: true
         Layout.preferredHeight: 330
-        color: "#e9eef5"; radius: 10
-        Image {
-            anchors.fill: parent; anchors.margins: 6
-            source: client.frameRevision > 0 ? "image://frames/preview?" + client.frameRevision : ""
-            asynchronous: true; cache: false; fillMode: Image.PreserveAspectFit
-        }
-        Label { anchors.centerIn: parent; visible: client.frameRevision === 0; text: "Configure a source and model, then start in SHADOW"; color: "#667085" }
-        ToolButton { anchors.right: parent.right; anchors.top: parent.top; text: "Expand"; onClicked: expandedPreview.open() }
-    }
-    Rectangle {
-        Layout.fillWidth: true; Layout.preferredHeight: 100; radius: 10
-        property bool classified: inspect.latest.status === "accepted" && Boolean(inspect.latest.prediction)
-        property bool rejected: classified && inspect.latest.prediction === (inspect.session.reject_class || "right")
-        color: !classified ? "#edf1f6" : rejected ? "#fdecea" : "#e8f7f0"
-        Column {
-            anchors.centerIn: parent; spacing: 8
-            Label { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.classified ? String(inspect.latest.prediction).toUpperCase() + (parent.parent.rejected ? " / REJECT" : " / PASS") : "WAITING"; font.pixelSize: 32; font.bold: true; color: parent.parent.rejected ? "#b42318" : "#172033" }
-            Label { anchors.horizontalCenter: parent.horizontalCenter; text: parent.parent.classified ? "Confidence " + Number(inspect.latest.confidence).toFixed(3) + " · Event " + inspect.latest.event_id : String(inspect.session.status || "Idle"); color: "#667085" }
+        property bool classified: client.cropRevision > 0 && inspect.latest.status === "accepted" && Boolean(inspect.latest.prediction)
+        property bool rejected: classified && inspect.latest.prediction === (inspect.latest.reject_class || inspect.session.reject_class || "right")
+        color: "white"; border.color: "#d9e1ec"; radius: 10
+        ColumnLayout {
+            anchors.fill: parent; anchors.margins: 20; spacing: 14
+            RowLayout {
+                Label { text: "Latest completed passage"; font.pixelSize: 16; font.weight: Font.DemiBold; color: "#172033"; Layout.fillWidth: true }
+                Label { text: "CROP-ONLY DISPLAY"; font.pixelSize: 11; font.weight: Font.DemiBold; color: "#667085" }
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.fillHeight: true; spacing: 24
+                Rectangle {
+                    Layout.preferredWidth: 250; Layout.fillHeight: true
+                    color: "#edf1f6"; radius: 8
+                    Image {
+                        id: classifiedCrop
+                        objectName: "classifiedCrop"
+                        anchors.fill: parent; anchors.margins: 8
+                        source: client.cropRevision > 0 ? "image://frames/crop?" + client.cropRevision : ""
+                        asynchronous: false; cache: false; fillMode: Image.PreserveAspectFit
+                    }
+                    Label {
+                        anchors.centerIn: parent; width: parent.width - 32
+                        visible: !passageCard.classified
+                        text: "The classified glove crop\nwill appear here"
+                        horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+                        color: "#667085"; lineHeight: 1.4
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true; Layout.fillHeight: true; spacing: 12
+                    Item { Layout.fillHeight: true }
+                    Label {
+                        objectName: "classifiedDecision"
+                        Layout.fillWidth: true; wrapMode: Text.Wrap
+                        text: passageCard.classified ? String(inspect.latest.prediction).toUpperCase() + (passageCard.rejected ? " / REJECT" : " / PASS") : "WAITING FOR A PASSAGE"
+                        font.pixelSize: passageCard.classified ? 36 : 25; font.bold: true
+                        color: !passageCard.classified ? "#667085" : passageCard.rejected ? "#b42318" : "#087a55"
+                    }
+                    Label {
+                        Layout.fillWidth: true; wrapMode: Text.Wrap
+                        text: passageCard.classified ? "Confidence " + Number(inspect.latest.confidence).toFixed(3) + " · Event " + inspect.latest.event_id : "Configure a source and model, then start in SHADOW."
+                        color: "#344054"
+                    }
+                    Label {
+                        Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#667085"; lineHeight: 1.4
+                        text: passageCard.classified ? "This crop and decision belong to the same event.\nRetained between passages; not a live camera image or actuator acknowledgement." : "Detection and passage tracking run internally.\nFull-frame video rendering is off by default."
+                    }
+                    Item { Layout.fillHeight: true }
+                }
+            }
         }
     }
     RowLayout {
@@ -113,7 +148,7 @@ ColumnLayout {
         }
     }
     RowLayout {
-        CheckBox { text: "Show preview"; checked: client.previewEnabled; onToggled: client.previewEnabled = checked }
+        Button { text: "Full-frame diagnostics…"; enabled: client.ready && Boolean(inspect.session.running); onClicked: expandedPreview.open() }
         CheckBox { text: "Reject audio alert"; checked: inspect.audioEnabled; onToggled: inspect.audioEnabled = checked }
         Slider {from:0;to:0.5;value:client.alertVolume;Layout.preferredWidth:100;onMoved:client.alertVolume=value;Accessible.name:"Alert volume"}
         Item { Layout.fillWidth: true }
@@ -121,6 +156,7 @@ ColumnLayout {
     }
     Dialog {
         id: setupDialog
+        objectName: "inspectionSetup"
         title: "Inspection setup"
         modal: true; width: Math.min(880, inspect.Window.window.width - 80); height: Math.min(720, inspect.Window.window.height - 80)
         anchors.centerIn: Overlay.overlay
@@ -164,11 +200,14 @@ ColumnLayout {
     }
     Dialog {
         id: expandedPreview
-        title: "Inspection preview"
+        title: "Full-frame diagnostics · presentation overhead enabled while open"
         modal: true; anchors.centerIn: Overlay.overlay
         width: inspect.Window.window.width - 60; height: inspect.Window.window.height - 60
         standardButtons: Dialog.Close
-        Image { anchors.fill: parent; source: client.frameRevision > 0 ? "image://frames/preview?"+client.frameRevision : ""; asynchronous: true; cache: false; fillMode: Image.PreserveAspectFit }
+        onOpened: client.previewEnabled = true
+        onClosed: client.previewEnabled = false
+        Image { anchors.fill: parent; source: client.previewEnabled && client.frameRevision > 0 ? "image://frames/preview?"+client.frameRevision : ""; asynchronous: true; cache: false; fillMode: Image.PreserveAspectFit }
+        Label { anchors.centerIn: parent; visible: client.frameRevision === 0; text: "Waiting for the next diagnostic frame…"; color: "#667085" }
     }
     Dialog {
         id: sessionTools

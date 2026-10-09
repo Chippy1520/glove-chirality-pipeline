@@ -47,11 +47,11 @@ GripClient::GripClient(FrameProvider *frames, QObject *parent) : QObject(parent)
     connect(&frameTimer_, &QTimer::timeout, this, &GripClient::fetchFrame);
     connect(&worker_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
         setStatus("Worker could not start: " + worker_.errorString());
-        ready_ = false; clearPreview(); emit readyChanged();
+        ready_ = false; clearPreview(); clearClassified(); emit readyChanged();
     });
     connect(&worker_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
         readinessTimer_.stop(); stateTimer_.stop(); frameTimer_.stop();
-        ready_ = false; clearPreview(); emit readyChanged();
+        ready_ = false; clearPreview(); clearClassified(); emit readyChanged();
         setStatus(closing_ ? "Stopped safely" : QString("Processing worker stopped (%1). Inspection is unavailable.").arg(code));
         if (closing_) QCoreApplication::quit();
     });
@@ -128,19 +128,21 @@ void GripClient::poll() {
     stateBusy_ = true;
     send("/api/desktop/state", "GET", {}, [this](QByteArray bytes, int code) {
         stateBusy_ = false;
-        if (code != 200) { clearPreview(); setStatus("Backend connection lost · preview cleared, displayed state may be stale"); return; }
+        if (code != 200) { clearPreview(); clearClassified(); setStatus("Backend connection lost · images cleared, displayed state may be stale"); return; }
         snapshot_ = QJsonDocument::fromJson(bytes).toVariant().toMap();
         const auto session = snapshot_.value(previewSession_).toMap();
         const auto key = previewSession_ + ":" + session.value("session_id").toString() + ":" + session.value("job_id").toString();
-        if (key != previewKey_ || !session.value("running").toBool()) clearPreview();
+        if (key != previewKey_) { clearPreview(); clearClassified(); }
+        else if (!session.value("running").toBool()) clearPreview();
         previewKey_ = key;
         emit snapshotChanged();
+        fetchClassified();
     });
 }
 void GripClient::setPreviewSession(const QString &session) {
     if (session != "factory" && session != "inference") return;
     if (previewSession_ == session) return;
-    previewSession_ = session; clearPreview(); emit previewSessionChanged();
+    previewSession_ = session; clearPreview(); clearClassified(); emit previewSessionChanged();
 }
 void GripClient::clearPreview() {
     ++previewGeneration_;
@@ -149,7 +151,44 @@ void GripClient::clearPreview() {
 }
 void GripClient::setPreviewEnabled(bool enabled) {
     if (previewEnabled_ == enabled) return;
+    if (!enabled) clearPreview();
     previewEnabled_ = enabled; emit previewSessionChanged();
+}
+void GripClient::clearClassified() {
+    ++cropGeneration_;
+    frames_->setImage({}, "crop"); cropRevision_ = 0; classifiedResult_.clear();
+    emit classifiedChanged();
+}
+void GripClient::fetchClassified() {
+    if (!ready_ || cropBusy_ || closing_) return;
+    const auto session = snapshot_.value(previewSession_).toMap();
+    const auto event = session.value("latest_classified").toMap();
+    const auto eventId = event.value("event_id").toString();
+    if (eventId.isEmpty() || classifiedResult_.value("event_id").toString() == eventId) return;
+    cropBusy_ = true;
+    const auto generation = cropGeneration_;
+    const auto sessionId = session.value("session_id").toString();
+    const auto jobId = session.value("job_id").toString();
+    send("/api/desktop/classified?session=" + previewSession_, "GET", {},
+         [this, generation, sessionId, jobId, eventId](QByteArray bytes, int code) {
+        const auto payload = QJsonDocument::fromJson(bytes).toVariant().toMap();
+        const auto event = payload.value("event").toMap();
+        if (generation != cropGeneration_ || closing_ || code != 200 ||
+            payload.value("session_id").toString() != sessionId ||
+            payload.value("job_id").toString() != jobId ||
+            event.value("event_id").toString() != eventId || event.value("status").toString() != "accepted") {
+            cropBusy_ = false; return;
+        }
+        const auto encoded = QByteArray::fromBase64(payload.value("crop_base64").toByteArray());
+        auto *watcher = new QFutureWatcher<QImage>(this);
+        connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher, generation, event] {
+            const auto image = watcher->result(); watcher->deleteLater(); cropBusy_ = false;
+            if (generation != cropGeneration_ || closing_ || image.isNull()) return;
+            frames_->setImage(image, "crop"); classifiedResult_ = event; ++cropRevision_;
+            emit classifiedChanged();
+        });
+        watcher->setFuture(QtConcurrent::run([encoded] { return QImage::fromData(encoded); }));
+    });
 }
 void GripClient::fetchFrame() {
     if (!ready_ || frameBusy_ || !previewEnabled_ || closing_) return;

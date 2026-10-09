@@ -1,5 +1,25 @@
 # Browser workstation
 
+## Native inspection display
+
+The Qt workstation's Inspect screen displays the latest **completed, classified
+glove crop**, its LEFT/RIGHT decision, confidence and event ID. Crop and result
+arrive as one event-scoped payload; unclassified/ambiguous events do not replace
+that pair. It remains visible between passages and after a normal stop, but is
+cleared when switching sessions/sources or losing the worker connection.
+
+Full-frame presentation is off by default. **Full-frame diagnostics…** temporarily
+enables it while the dialog is open. Closing the dialog or leaving Inspect disables
+it again. With no preview demand, the worker does not copy, overlay or JPEG-encode
+full frames for presentation. Detection, passage tracking, extraction and counters
+still run internally; model and precision defaults are unchanged.
+
+**Setup → Line → actuator travel time (ms)** accepts an optional calibration value
+from 1 to 60,000 ms and saves it in the session manifest. This is **calibration only**:
+remaining-time compensation has not been implemented. The existing advanced
+**Controller command delay (ms)** is still sent unchanged after classification.
+Neither the displayed decision nor the calibration field is an actuator acknowledgement.
+
 The primary interface is a responsive Flask/Waitress browser application that calls the same tested CLI used by scripts and deployment. It does not reimplement extraction, training, or inference logic.
 
 ## Launch

@@ -134,3 +134,55 @@ def test_preflight_resolves_cli_subcommand_for_both_launchers(tmp_path, monkeypa
     report = check_workflow("audit_dataset", {"manifest": "manifest.csv", "output": "audit.json"}, tmp_path)
     command_check = next(check for check in report["checks"] if check["field"] == "command")
     assert command_check["status"] == "passed", report
+
+
+def test_classified_endpoint_retains_matching_crop_and_decision(desktop):
+    import base64
+
+    import cv2
+    import numpy as np
+
+    client, _, _, factory, inference, _ = desktop
+    path = "/api/desktop/classified"
+    assert client.get(path).status_code == 403
+    assert client.get(path, headers=HEADERS).status_code == 204
+    assert client.get(path + "?session=invalid", headers=HEADERS).status_code == 400
+    factory.session_id, factory.job_id = "session-one", "job-one"
+    for index, prediction in enumerate(("left", "right"), start=1):
+        crop = np.full((24, 24, 3), index * 60, dtype=np.uint8)
+        factory._on_event({"event_id": f"glove-{index}", "status": "accepted",
+                           "prediction": prediction, "confidence": 0.95, "crop": crop})
+        response = client.get(path, headers=HEADERS)
+        assert response.headers["Cache-Control"] == "no-store"
+        pair = response.get_json()
+        assert (pair["session_id"], pair["job_id"]) == ("session-one", "job-one")
+        assert pair["event"]["event_id"] == f"glove-{index}"
+        assert pair["event"]["prediction"] == prediction
+        decoded = cv2.imdecode(np.frombuffer(base64.b64decode(pair["crop_base64"]), np.uint8), cv2.IMREAD_COLOR)
+        np.testing.assert_allclose(decoded, crop, atol=2)
+    factory._on_event({"event_id": "ambiguous", "status": "rejected", "prediction": None,
+                       "crop": np.zeros((24, 24, 3), dtype=np.uint8)})
+    assert client.get(path, headers=HEADERS).get_json() == pair
+    assert factory.snapshot(reveal_paths=True)["latest"]["event_id"] == "ambiguous"
+    assert factory.snapshot(reveal_paths=True)["latest_classified"]["event_id"] == "glove-2"
+    pair["event"]["prediction"] = "modified-client-copy"
+    assert factory.classified_result()["event"]["prediction"] == "right"
+    assert client.get(path + "?session=inference", headers=HEADERS).status_code == 204
+    assert inference.classified_result() is None
+
+
+@pytest.mark.parametrize("value", ["0", "60001", "1.5", "nan", "inf", "bad"])
+def test_travel_time_calibration_rejects_invalid_values(value):
+    with pytest.raises(ValueError):
+        FactoryLiveSession._line_to_actuator_ms({"line_to_actuator_ms": value})
+
+
+def test_travel_time_calibration_is_optional_and_visible(desktop):
+    client, *_ = desktop
+    assert FactoryLiveSession._line_to_actuator_ms({}) is None
+    assert FactoryLiveSession._line_to_actuator_ms({"line_to_actuator_ms": ""}) is None
+    assert FactoryLiveSession._line_to_actuator_ms({"line_to_actuator_ms": "1250"}) == 1250
+    fields = {field["name"]: field for field in client.get("/api/desktop/schema", headers=HEADERS).get_json()["factory"]}
+    assert fields["line_to_actuator_ms"]["advanced"] is False
+    assert fields["line_to_actuator_ms"]["help_always"] is True
+    assert "Not yet applied" in fields["line_to_actuator_ms"]["help"]

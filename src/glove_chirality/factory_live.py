@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import json
@@ -397,6 +398,7 @@ class FactoryLiveSession:
         self._config: ExtractionConfig | None = None
         self._latest_frame: np.ndarray | None = None
         self._latest_crop: bytes | None = None
+        self._classified: tuple[dict[str, Any], bytes] | None = None
         self._latest: dict[str, Any] | None = None
         self._positions: list[dict[str, Any]] = []
         self._events: deque[dict[str, Any]] = deque(maxlen=500)
@@ -572,6 +574,16 @@ class FactoryLiveSession:
             self._events.append(record)
         return record
 
+    @staticmethod
+    def _line_to_actuator_ms(options: dict) -> int | None:
+        value = options.get("line_to_actuator_ms")
+        if value is None or str(value).strip() == "":
+            return None
+        travel = float(value)
+        if not math.isfinite(travel) or not 1 <= travel <= 60000 or not travel.is_integer():
+            raise ValueError("Line-to-actuator travel time must be an integer in [1, 60000] ms")
+        return int(travel)
+
     def preflight(self, options: dict) -> dict:
         """Accumulate plain validation without opening a camera, loading models, or serial."""
         checks = []
@@ -621,6 +633,7 @@ class FactoryLiveSession:
                 require(camera.get(field) is None or 0 < camera[field] <= 16384)
             require(camera.get("fourcc") is None or len(camera["fourcc"]) == 4)
         check("camera", camera_check)
+        check("line_to_actuator_ms", lambda: self._line_to_actuator_ms(options))
         check("device", lambda: require(bool(re.fullmatch(r"auto|cpu|cuda(?::[0-9]+)?", str(options.get("device", "auto"))))))
         # Independently validate fields so the UI reports all invalid inputs together.
         for field in ("decision_policy", "decision_class", "decision_threshold", "reject_class", "actuator_delay_ms"):
@@ -658,7 +671,9 @@ class FactoryLiveSession:
             self._capture = None
             self._latest = None
             self._latest_crop = None
+            self._classified = None
             self._preview_source = None
+            self._preview_wanted_until = 0.0
             self._jpeg_cache = None
             self._events.clear()
             self._metrics = {}
@@ -824,6 +839,7 @@ class FactoryLiveSession:
         classifier=None,
         capture=None,
     ) -> dict[str, Any]:
+        self._line_to_actuator_ms(options)
         mode = str(options.get("mode", "shadow"))
         if mode not in MODES:
             raise ValueError("mode must be preview, shadow, or armed")
@@ -879,6 +895,7 @@ class FactoryLiveSession:
             self._options = dict(options)
             self._latest = None
             self._latest_crop = None
+            self._classified = None
             self._latest_frame = None
             self._positions = []
             self._events.clear()
@@ -947,6 +964,8 @@ class FactoryLiveSession:
             "serial_port": serial.get("port"),
             "baud": serial.get("baud") or self._options.get("baud"),
             "actuator_delay_ms": self._delay_ms,
+            "line_to_actuator_ms": self._line_to_actuator_ms(self._options),
+            "remaining_time_compensation": False,
             "fault": self.fault,
             "status": self.status,
             "geometry_override": self._geometry_override,
@@ -1158,9 +1177,7 @@ class FactoryLiveSession:
         now = time.monotonic()
         inspecting = bool(result.detections)
         source = None
-        if self._preview_source is None or (
-            now <= self._preview_wanted_until and now - self._preview_stamp >= 0.1
-        ):
+        if now <= self._preview_wanted_until and now - self._preview_stamp >= 0.1:
             source = frame.copy()
         with self._lock:
             self._positions = positions
@@ -1178,6 +1195,11 @@ class FactoryLiveSession:
                 self._preview_detections = tuple(result.detections)
                 self._preview_rejected = tuple(getattr(diagnostics, "size_rejected", ()) or ()) if self._show_rejected else ()
                 self._preview_stamp = now
+                self._jpeg_cache = None
+            elif now > self._preview_wanted_until:
+                self._preview_source = None
+                self._preview_detections = ()
+                self._preview_rejected = ()
                 self._jpeg_cache = None
 
     def frame_jpeg(self) -> bytes | None:
@@ -1265,12 +1287,15 @@ class FactoryLiveSession:
                 self._on_serial_fault(str(exc))
         self._count(record)
         crop = record.pop("crop", None)
+        encoded = None
         if isinstance(crop, np.ndarray):
             encoded = _jpeg(crop, 95)
-            with self._lock:
-                self._latest_crop = encoded
         with self._lock:
+            if encoded is not None:
+                self._latest_crop = encoded
             self._latest = {key: value for key, value in record.items() if key != "crop"}
+            if record["classifier_ran"] and encoded is not None:
+                self._classified = (dict(self._latest), encoded)
             self._events.append(dict(self._latest))
         self._append_jsonl(self._event_file, self._latest)
 
@@ -1313,6 +1338,17 @@ class FactoryLiveSession:
         with self._lock:
             return self._latest_crop
 
+    def classified_result(self) -> dict[str, Any] | None:
+        """One atomic crop/result pair, retained until the next classified passage."""
+        with self._lock:
+            pair = self._classified
+            session_id, job_id = self.session_id, self.job_id
+        if pair is None:
+            return None
+        event, encoded = pair
+        return {"session_id": session_id, "job_id": job_id, "event": dict(event),
+                "crop_base64": base64.b64encode(encoded).decode("ascii")}
+
     def snapshot(self, *, reveal_paths: bool) -> dict[str, Any]:
         with self._lock:
             serial = self._serial_snapshot()
@@ -1347,6 +1383,7 @@ class FactoryLiveSession:
                 "counters": dict(self._counters),
                 "metrics": dict(self._metrics),
                 "latest": None if self._latest is None else dict(self._latest),
+                "latest_classified": None if self._classified is None else dict(self._classified[0]),
                 "positions": list(self._positions),
                 "events": [dict(item) for item in self._events],
                 "serial": serial,
@@ -1381,6 +1418,8 @@ class FactoryLiveSession:
                 payload["events"] = [_public_event(item) for item in payload["events"]]
                 if payload["latest"] is not None:
                     payload["latest"] = _public_event(payload["latest"])
+                if payload["latest_classified"] is not None:
+                    payload["latest_classified"] = _public_event(payload["latest_classified"])
         payload["preflight"] = {"checks": payload["checks"],
                                 "errors": [c["message"] for c in payload["checks"] if c["status"] == "failed"]}
         payload["elapsed_time"] = payload["elapsed_s"]

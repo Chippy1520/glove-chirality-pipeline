@@ -129,6 +129,7 @@ def test_factory_session_start_stop_frame_and_event(tmp_path):
             "device": "cpu",
             "mode": "shadow",
             "reject_class": "right",
+            "line_to_actuator_ms": "1200",
         },
         runner=runner,
         detector=object(),
@@ -143,6 +144,8 @@ def test_factory_session_start_stop_frame_and_event(tmp_path):
     assert status["latest"]["actuator_command"] is None
     assert status["counters"]["right_reject"] == 1
     assert status["counters"]["commands_sent"] == 0
+    assert session.frame_jpeg() is None
+    session._on_frame(frame, FrameResult((), (), 1.0, 0.2), 0.2)
     assert session.frame_jpeg()
     assert session.crop_jpeg()
     session.set_mode("armed", confirm=True)
@@ -172,6 +175,11 @@ def test_factory_session_start_stop_frame_and_event(tmp_path):
     assert session.mode == "shadow"
     assert (session.session_dir / "events.jsonl").is_file()
     assert (session.session_dir / "session.json").is_file()
+    import json
+
+    manifest = json.loads((session.session_dir / "session.json").read_text())
+    assert manifest["line_to_actuator_ms"] == 1200
+    assert manifest["remaining_time_compensation"] is False
 
 
 def test_pipeline_reject_does_not_command_or_invent_confidence(tmp_path):

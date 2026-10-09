@@ -55,6 +55,18 @@ def create_desktop_app(service, factory, inference, token: str, shutdown=None):
     def heartbeat():
         return jsonify(status="ok")
 
+    @app.get("/api/desktop/classified")
+    def classified():
+        name = request.args.get("session", "factory")
+        if name not in {"factory", "inference"}:
+            abort(400, description="session must be factory or inference")
+        result = (factory if name == "factory" else inference).classified_result()
+        if result is None:
+            return "", 204
+        response = jsonify(result)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.post("/api/desktop/shutdown")
     def stop():
         if shutdown is not None:

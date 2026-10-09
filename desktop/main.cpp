@@ -61,7 +61,15 @@ int main(int argc, char **argv) {
                     });
                 });
             }
-            QTimer::singleShot(5000, &client, &GripClient::shutdown);
+            QTimer::singleShot(4500, window, [window, captures] {
+                window->setProperty("currentArea", 0);
+                if (auto *setup = window->findChild<QObject *>("inspectionSetup"))
+                    QMetaObject::invokeMethod(setup, "open");
+                QTimer::singleShot(400, window, [window, captures] {
+                    window->grabWindow().save(captures + "/native_setup.png");
+                });
+            });
+            QTimer::singleShot(5500, &client, &GripClient::shutdown);
         });
         QTimer::singleShot(65000, &client, &GripClient::shutdown);
     }
